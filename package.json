@@ -1,0 +1,71 @@
+{
+  "name": "zennora-signalk-weatherflow",
+  "version": "0.5.0-alpha.1",
+  "description": "SignalK plugin for WeatherFlow weather station data ingestion",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "appicon": "zennora.png",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build",
+    "prepare": "npm run build",
+    "postinstall": "echo 'Building TypeScript...' && npm run build",
+    "dev": "npm run build && npm run watch",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "format": "prettier --write src/**/*.ts *.json --ignore-unknown",
+    "format:check": "prettier --check src/**/*.ts *.json --ignore-unknown",
+    "ci": "npm run format:check && npm run lint"
+  },
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-category-weather",
+    "signalk-category-instruments",
+    "zennora-signalk-weatherflow",
+    "weatherflow",
+    "weather",
+    "signalk",
+    "typescript"
+  ],
+  "author": "Maurice Tamman",
+  "license": "MIT",
+  "dependencies": {
+    "@signalk/server-api": "^2.7.1",
+    "@types/node": "^20.5.0",
+    "@types/ws": "^8.5.5",
+    "@types/node-fetch": "^2.6.4",
+    "typescript": "^5.1.6",
+    "ws": "^8.14.2",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-config-standard-with-typescript": "^43.0.1",
+    "eslint-plugin-prettier": "^5.1.3",
+    "prettier": "^3.2.5"
+  },
+  "engines": {
+    "node": ">=12.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/motamman/zennora-signalk-weatherflow.git"
+  },
+  "signalk": {
+    "appSupport": "none",
+    "compatibility": ">=2.13.0",
+    "displayName": "Zennora WeatherFlow Plugin"
+  },
+  "files": [
+    "dist/**/*",
+    "src/**/*",
+    "tsconfig.json",
+    "README.md"
+  ]
+}
