@@ -1,5 +1,5 @@
 {
-  "name": "zennora-signalk-weatherflow",
+  "name": "signalk-weatherflow",
   "version": "0.5.0-alpha.1",
   "description": "SignalK plugin for WeatherFlow weather station data ingestion",
   "main": "dist/index.js",
@@ -28,7 +28,14 @@
     "weatherflow",
     "weather",
     "signalk",
-    "typescript"
+    "typescript",
+    "wind",
+    "temperature",
+    "humidity",
+    "pressure",
+    "rain",
+    "lightning",
+    "weather station"
   ],
   "author": "Maurice Tamman",
   "license": "MIT",
@@ -55,12 +62,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/motamman/zennora-signalk-weatherflow.git"
+    "url": "https://github.com/motamman/signalk-weatherflow.git"
   },
   "signalk": {
     "appSupport": "none",
     "compatibility": ">=2.13.0",
-    "displayName": "Zennora WeatherFlow Plugin"
+    "displayName": "SignalK WeatherFlow Plugin"
   },
   "files": [
     "dist/**/*",

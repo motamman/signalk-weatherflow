@@ -1,4 +1,4 @@
-# Zennora WeatherFlow Ingester
+# SignalK WeatherFlow Ingester
 
 This SignalK plugin integrates WeatherFlow weather station, in particular the Tempest, data into your SignalK server, providing real-time weather observations, forecasts, and calculated wind data.
 
@@ -16,8 +16,8 @@ This SignalK plugin integrates WeatherFlow weather station, in particular the Te
 
 1. Install the plugin in your SignalK server:
    ```bash
-   cd ~/.signalk/node_modules/
-   npm install motamman/zennora-signalk-weatherflow
+   cd ~/signalk/node_modules/
+   npm install motamman/signalk-weatherflow
    ```
 
 2. Restart your SignalK server
