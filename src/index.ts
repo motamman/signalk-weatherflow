@@ -169,6 +169,39 @@ export = function (app: SignalKApp): SignalKPlugin {
     return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
   }
 
+  // Persistent state management
+  function getStateFilePath(): string {
+    return require('path').join(app.getDataDirPath(), 'signalk-weatherflow-state.json');
+  }
+
+  function loadPersistedState(): Partial<{ webSocketEnabled: boolean; forecastEnabled: boolean; windCalculationsEnabled: boolean }> {
+    try {
+      const fs = require('fs');
+      const stateFile = getStateFilePath();
+      if (fs.existsSync(stateFile)) {
+        const data = fs.readFileSync(stateFile, 'utf8');
+        return JSON.parse(data);
+      }
+    } catch (error) {
+      app.debug('Could not load persisted state: ' + (error as Error).message);
+    }
+    return {};
+  }
+
+  function savePersistedState(): void {
+    try {
+      const fs = require('fs');
+      const stateToSave = {
+        webSocketEnabled: state.webSocketEnabled,
+        forecastEnabled: state.forecastEnabled,
+        windCalculationsEnabled: state.windCalculationsEnabled,
+      };
+      fs.writeFileSync(getStateFilePath(), JSON.stringify(stateToSave, null, 2));
+    } catch (error) {
+      app.error('Could not save persisted state: ' + (error as Error).message);
+    }
+  }
+
   // Setup PUT control for individual service control
   function setupPutControl(config: PluginConfig): void {
     const controlPaths = [
@@ -190,6 +223,9 @@ export = function (app: SignalKApp): SignalKPlugin {
         if (requestPath === path) {
           const newState = Boolean(value);
           handleServiceControl(service, newState, config);
+          
+          // Save the new state to persist across restarts
+          savePersistedState();
           
           // Publish updated state
           const updatedDelta = createSignalKDelta(
@@ -366,11 +402,11 @@ export = function (app: SignalKApp): SignalKPlugin {
     state.currentConfig = config;
     plugin.config = config;
 
-    // Always initialize service states from configuration
-    // Config checkboxes are the master control
-    state.webSocketEnabled = config.enableWebSocket;
-    state.forecastEnabled = config.enableForecast;
-    state.windCalculationsEnabled = config.enableWindCalculations;
+    // Load persisted state, fall back to config defaults
+    const persistedState = loadPersistedState();
+    state.webSocketEnabled = persistedState.webSocketEnabled ?? config.enableWebSocket;
+    state.forecastEnabled = persistedState.forecastEnabled ?? config.enableForecast;
+    state.windCalculationsEnabled = persistedState.windCalculationsEnabled ?? config.enableWindCalculations;
 
     // Start plugin services
     startPluginServices(config);

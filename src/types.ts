@@ -5,6 +5,7 @@ export interface SignalKApp {
   handleMessage: (pluginId: string, delta: SignalKDelta) => void;
   savePluginOptions: (options: any, callback: (err?: any) => void) => void;
   setProviderStatus: (msg: string) => void;
+  getDataDirPath: () => string;
   subscriptionmanager: {
     subscribe: (
       subscription: SubscriptionRequest,
