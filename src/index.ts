@@ -26,6 +26,7 @@ import {
   SubscriptionRequest,
   SubscriptionValue,
   WindInput,
+  PutHandler,
 } from './types';
 
 export = function (app: SignalKApp): SignalKPlugin {
@@ -50,7 +51,7 @@ export = function (app: SignalKApp): SignalKPlugin {
     webSocketEnabled: true,
     forecastEnabled: true,
     windCalculationsEnabled: true,
-    putHandlers: [],
+    putHandlers: new Map(),
   };
 
   // Configuration schema
@@ -177,49 +178,47 @@ export = function (app: SignalKApp): SignalKPlugin {
     ];
 
     controlPaths.forEach(({ path, service }) => {
-      const subscriptionRequest: SubscriptionRequest = {
-        context: 'vessels.self',
-        subscribe: [
-          {
-            path: path,
-            policy: 'ideal',
-            period: 200,
-            format: 'delta',
-          },
-        ],
-      };
-
-      const unsubscribes: Array<() => void> = [];
-      
-      const subscriptionError = (err: unknown): void => {
-        app.error(`PUT control subscription error for ${service}: ${err}`);
-      };
-
-      const dataCallback = (delta: SignalKDelta): void => {
-        if (delta.updates) {
-          delta.updates.forEach(update => {
-            if (update.values) {
-              update.values.forEach(valueUpdate => {
-                if (valueUpdate.path === path) {
-                  const newState = Boolean(valueUpdate.value);
-                  handleServiceControl(service, newState, config);
-                }
-              });
-            }
-          });
+      // Create PUT handler
+      const putHandler: PutHandler = (
+        context: string,
+        requestPath: string,
+        value: any,
+        callback?: (result: { state: string; statusCode?: number }) => void
+      ): { state: string; statusCode?: number } => {
+        app.debug(`PUT request received for ${requestPath} with value: ${JSON.stringify(value)}`);
+        
+        if (requestPath === path) {
+          const newState = Boolean(value);
+          handleServiceControl(service, newState, config);
+          
+          // Publish updated state
+          const updatedDelta = createSignalKDelta(
+            path,
+            newState,
+            getVesselBasedSource(config.vesselName, 'control')
+          );
+          app.handleMessage(plugin.id, updatedDelta);
+          
+          const result = { state: 'COMPLETED' };
+          if (callback) callback(result);
+          return result;
+        } else {
+          const result = { state: 'COMPLETED', statusCode: 405 };
+          if (callback) callback(result);
+          return result;
         }
       };
 
-      app.subscriptionmanager.subscribe(
-        subscriptionRequest,
-        unsubscribes,
-        subscriptionError,
-        dataCallback
+      // Register PUT handler with SignalK
+      app.registerPutHandler(
+        'vessels.self',
+        path,
+        putHandler,
+        'signalk-weatherflow'
       );
 
-      state.putHandlers.push(() => {
-        unsubscribes.forEach(unsub => unsub());
-      });
+      // Store handler for cleanup
+      state.putHandlers.set(path, putHandler);
       
       // Publish initial state
       const initialState = getServiceState(service);
@@ -386,8 +385,7 @@ export = function (app: SignalKApp): SignalKPlugin {
     stopPluginServices();
 
     // Clean up PUT handlers
-    state.putHandlers.forEach(handler => handler());
-    state.putHandlers = [];
+    state.putHandlers.clear();
 
     if (state.windyInterval) {
       clearInterval(state.windyInterval);

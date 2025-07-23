@@ -13,6 +13,12 @@ export interface SignalKApp {
       dataCallback: (delta: SignalKDelta) => void
     ) => void;
   };
+  registerPutHandler: (
+    context: string,
+    path: string,
+    handler: (context: string, path: string, value: any, callback?: (result: { state: string; statusCode?: number }) => void) => { state: string; statusCode?: number },
+    source?: string
+  ) => void;
 }
 
 export interface SignalKPlugin {
@@ -42,6 +48,14 @@ export interface PluginConfig {
   windCalculationsControlPath: string;
 }
 
+// PUT handler type
+export type PutHandler = (
+  context: string,
+  path: string,
+  value: any,
+  callback?: (result: { state: string; statusCode?: number }) => void
+) => { state: string; statusCode?: number };
+
 // Plugin state
 export interface PluginState {
   udpServer: any;
@@ -54,7 +68,7 @@ export interface PluginState {
   webSocketEnabled: boolean;
   forecastEnabled: boolean;
   windCalculationsEnabled: boolean;
-  putHandlers: Array<() => void>;
+  putHandlers: Map<string, PutHandler>;
 }
 
 // WeatherFlow message types
