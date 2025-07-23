@@ -135,6 +135,11 @@ export = function (app: SignalKApp): SignalKPlugin {
     return `${formattedName}-weatherflow-${suffix}`;
   }
 
+  // Utility function to convert underscore_case to camelCase
+  function toCamelCase(str: string): string {
+    return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+  }
+
   // Plugin start function
   plugin.start = function (
     options: Partial<PluginConfig>,
@@ -849,6 +854,7 @@ export = function (app: SignalKApp): SignalKPlugin {
         Object.entries(forecast).forEach(([key, value]) => {
           if (value !== undefined) {
             let processedValue = value;
+            const camelKey = toCamelCase(key);
             
             // Apply unit conversions
             if (key === 'air_temperature' || key === 'feels_like') {
@@ -873,7 +879,7 @@ export = function (app: SignalKApp): SignalKPlugin {
             }
             
             const delta = createSignalKDelta(
-              `environment.outside.tempest.forecast.hourly.${key}.${index}`,
+              `environment.outside.tempest.forecast.hourly.${camelKey}.${index}`,
               processedValue,
               source
             );
@@ -892,6 +898,7 @@ export = function (app: SignalKApp): SignalKPlugin {
         Object.entries(forecast).forEach(([key, value]) => {
           if (value !== undefined) {
             let processedValue = value;
+            const camelKey = toCamelCase(key);
             
             // Apply unit conversions
             if (key === 'air_temp_high' || key === 'air_temp_low') {
@@ -902,7 +909,7 @@ export = function (app: SignalKApp): SignalKPlugin {
             if (key === 'day_start_local' || key === 'sunrise' || key === 'sunset') {
               processedValue = value;
               // Also create ISO version
-              const isoKey = `${key}_iso`;
+              const isoKey = `${toCamelCase(key)}Iso`;
               const isoValue = new Date((value as number) * 1000).toISOString();
               const isoDelta = createSignalKDelta(
                 `environment.outside.tempest.forecast.daily.${isoKey}.${index}`,
@@ -913,7 +920,7 @@ export = function (app: SignalKApp): SignalKPlugin {
             }
             
             const delta = createSignalKDelta(
-              `environment.outside.tempest.forecast.daily.${key}.${index}`,
+              `environment.outside.tempest.forecast.daily.${camelKey}.${index}`,
               processedValue,
               source
             );
