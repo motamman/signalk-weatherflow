@@ -117,7 +117,8 @@ export = function (app: SignalKApp): SignalKPlugin {
       enablePutControl: {
         type: 'boolean',
         title: 'Enable PUT Control',
-        description: 'Allow external control of individual plugin services via PUT requests',
+        description:
+          'Allow external control of individual plugin services via PUT requests',
         default: false,
       },
       webSocketControlPath: {
@@ -171,10 +172,17 @@ export = function (app: SignalKApp): SignalKPlugin {
 
   // Persistent state management
   function getStateFilePath(): string {
-    return require('path').join(app.getDataDirPath(), 'signalk-weatherflow-state.json');
+    return require('path').join(
+      app.getDataDirPath(),
+      'signalk-weatherflow-state.json'
+    );
   }
 
-  function loadPersistedState(): Partial<{ webSocketEnabled: boolean; forecastEnabled: boolean; windCalculationsEnabled: boolean }> {
+  function loadPersistedState(): Partial<{
+    webSocketEnabled: boolean;
+    forecastEnabled: boolean;
+    windCalculationsEnabled: boolean;
+  }> {
     try {
       const fs = require('fs');
       const stateFile = getStateFilePath();
@@ -196,7 +204,10 @@ export = function (app: SignalKApp): SignalKPlugin {
         forecastEnabled: state.forecastEnabled,
         windCalculationsEnabled: state.windCalculationsEnabled,
       };
-      fs.writeFileSync(getStateFilePath(), JSON.stringify(stateToSave, null, 2));
+      fs.writeFileSync(
+        getStateFilePath(),
+        JSON.stringify(stateToSave, null, 2)
+      );
     } catch (error) {
       app.error('Could not save persisted state: ' + (error as Error).message);
     }
@@ -205,14 +216,14 @@ export = function (app: SignalKApp): SignalKPlugin {
   // Update plugin configuration to match current state
   function updatePluginConfig(): void {
     if (!state.currentConfig) return;
-    
+
     const updatedConfig = {
       ...state.currentConfig,
       enableWebSocket: state.webSocketEnabled,
       enableForecast: state.forecastEnabled,
       enableWindCalculations: state.windCalculationsEnabled,
     };
-    
+
     app.savePluginOptions(updatedConfig, (err?: any) => {
       if (err) {
         app.error('Could not save plugin configuration: ' + err.message);
@@ -228,7 +239,7 @@ export = function (app: SignalKApp): SignalKPlugin {
     const controlPaths = [
       { path: config.webSocketControlPath, service: 'webSocket' },
       { path: config.forecastControlPath, service: 'forecast' },
-      { path: config.windCalculationsControlPath, service: 'windCalculations' }
+      { path: config.windCalculationsControlPath, service: 'windCalculations' },
     ];
 
     controlPaths.forEach(({ path, service }) => {
@@ -239,18 +250,20 @@ export = function (app: SignalKApp): SignalKPlugin {
         value: any,
         callback?: (result: { state: string; statusCode?: number }) => void
       ): { state: string; statusCode?: number } => {
-        app.debug(`PUT request received for ${requestPath} with value: ${JSON.stringify(value)}`);
-        
+        app.debug(
+          `PUT request received for ${requestPath} with value: ${JSON.stringify(value)}`
+        );
+
         if (requestPath === path) {
           const newState = Boolean(value);
           handleServiceControl(service, newState, config);
-          
+
           // Save the new state to persist across restarts
           savePersistedState();
-          
+
           // Update plugin configuration so checkboxes reflect the change
           updatePluginConfig();
-          
+
           // Publish updated state
           const updatedDelta = createSignalKDelta(
             path,
@@ -258,7 +271,7 @@ export = function (app: SignalKApp): SignalKPlugin {
             getVesselBasedSource(config.vesselName, 'control')
           );
           app.handleMessage(plugin.id, updatedDelta);
-          
+
           const result = { state: 'COMPLETED' };
           if (callback) callback(result);
           return result;
@@ -279,7 +292,7 @@ export = function (app: SignalKApp): SignalKPlugin {
 
       // Store handler for cleanup
       state.putHandlers.set(path, putHandler);
-      
+
       // Publish current state (which reflects config checkboxes)
       const currentState = getServiceState(service);
       const initialDelta = createSignalKDelta(
@@ -288,29 +301,44 @@ export = function (app: SignalKApp): SignalKPlugin {
         getVesselBasedSource(config.vesselName, 'control')
       );
       app.handleMessage(plugin.id, initialDelta);
-      
+
       app.debug(`PUT control enabled for ${service} on path: ${path}`);
     });
   }
 
   // Handle individual service control
-  function handleServiceControl(service: string, newState: boolean, config: PluginConfig): void {
+  function handleServiceControl(
+    service: string,
+    newState: boolean,
+    config: PluginConfig
+  ): void {
     const currentState = getServiceState(service);
-    
+
     if (newState !== currentState) {
-      app.debug(`${newState ? 'Enabling' : 'Disabling'} ${service} via PUT control`);
-      
+      app.debug(
+        `${newState ? 'Enabling' : 'Disabling'} ${service} via PUT control`
+      );
+
       if (service === 'webSocket') {
         state.webSocketEnabled = newState;
         if (newState && config.enableWebSocket && config.apiToken) {
-          startWebSocketConnection(config.apiToken, config.deviceId, config.vesselName);
+          startWebSocketConnection(
+            config.apiToken,
+            config.deviceId,
+            config.vesselName
+          );
         } else if (!newState && state.wsConnection) {
           state.wsConnection.close();
           state.wsConnection = null;
         }
       } else if (service === 'forecast') {
         state.forecastEnabled = newState;
-        if (newState && config.enableForecast && config.apiToken && config.stationId) {
+        if (
+          newState &&
+          config.enableForecast &&
+          config.apiToken &&
+          config.stationId
+        ) {
           startForecastFetching(config);
         } else if (!newState && state.forecastInterval) {
           clearInterval(state.forecastInterval);
@@ -327,21 +355,26 @@ export = function (app: SignalKApp): SignalKPlugin {
           state.windCalculations = null;
         }
       }
-      
-      app.setProviderStatus(`WeatherFlow ${service} ${newState ? 'enabled' : 'disabled'} via external control`);
+
+      app.setProviderStatus(
+        `WeatherFlow ${service} ${newState ? 'enabled' : 'disabled'} via external control`
+      );
     }
   }
 
   // Get current state of a service
   function getServiceState(service: string): boolean {
     switch (service) {
-      case 'webSocket': return state.webSocketEnabled;
-      case 'forecast': return state.forecastEnabled;
-      case 'windCalculations': return state.windCalculationsEnabled;
-      default: return false;
+      case 'webSocket':
+        return state.webSocketEnabled;
+      case 'forecast':
+        return state.forecastEnabled;
+      case 'windCalculations':
+        return state.windCalculationsEnabled;
+      default:
+        return false;
     }
   }
-
 
   // Start plugin services (factored out for PUT control)
   function startPluginServices(config: PluginConfig): void {
@@ -364,7 +397,12 @@ export = function (app: SignalKApp): SignalKPlugin {
     }
 
     // Initialize forecast data fetching if enabled and not controlled externally
-    if (config.enableForecast && config.apiToken && config.stationId && state.forecastEnabled) {
+    if (
+      config.enableForecast &&
+      config.apiToken &&
+      config.stationId &&
+      state.forecastEnabled
+    ) {
       startForecastFetching(config);
     }
   }
@@ -418,9 +456,13 @@ export = function (app: SignalKApp): SignalKPlugin {
       enableWindCalculations: options.enableWindCalculations !== false,
       deviceId: options.deviceId || 405588,
       enablePutControl: options.enablePutControl === true,
-      webSocketControlPath: options.webSocketControlPath || 'network.weatherflow.webSocket.state',
-      forecastControlPath: options.forecastControlPath || 'network.weatherflow.forecast.state',
-      windCalculationsControlPath: options.windCalculationsControlPath || 'network.weatherflow.windCalculations.state',
+      webSocketControlPath:
+        options.webSocketControlPath || 'network.weatherflow.webSocket.state',
+      forecastControlPath:
+        options.forecastControlPath || 'network.weatherflow.forecast.state',
+      windCalculationsControlPath:
+        options.windCalculationsControlPath ||
+        'network.weatherflow.windCalculations.state',
     };
 
     state.currentConfig = config;
@@ -1091,27 +1133,32 @@ export = function (app: SignalKApp): SignalKPlugin {
     if (data.forecast && data.forecast.hourly) {
       data.forecast.hourly.slice(0, 72).forEach((forecast, index) => {
         const source = getVesselBasedSource(vesselName, 'api');
-        
+
         // Create individual deltas for each data point
         Object.entries(forecast).forEach(([key, value]) => {
           if (value !== undefined) {
             let processedValue = value;
             const camelKey = toCamelCase(key);
-            
+
             // Apply unit conversions
             if (key === 'air_temperature' || key === 'feels_like') {
               processedValue = (value as number) + 273.15; // °C to K
-            } else if (key === 'sea_level_pressure' || key === 'station_pressure') {
+            } else if (
+              key === 'sea_level_pressure' ||
+              key === 'station_pressure'
+            ) {
               processedValue = (value as number) * 100; // MB to Pa
             } else if (key === 'wind_direction') {
-              processedValue = (value as number) * Math.PI / 180; // degrees to radians
+              processedValue = ((value as number) * Math.PI) / 180; // degrees to radians
             }
-            
+
             // Add datetime field for time
             if (key === 'time') {
               processedValue = value;
               // Also create datetime version
-              const datetimeValue = new Date((value as number) * 1000).toISOString();
+              const datetimeValue = new Date(
+                (value as number) * 1000
+              ).toISOString();
               const datetimeDelta = createSignalKDelta(
                 `environment.outside.tempest.forecast.hourly.datetime.${index}`,
                 datetimeValue,
@@ -1119,7 +1166,7 @@ export = function (app: SignalKApp): SignalKPlugin {
               );
               app.handleMessage(plugin.id, datetimeDelta);
             }
-            
+
             const delta = createSignalKDelta(
               `environment.outside.tempest.forecast.hourly.${camelKey}.${index}`,
               processedValue,
@@ -1135,20 +1182,24 @@ export = function (app: SignalKApp): SignalKPlugin {
     if (data.forecast && data.forecast.daily) {
       data.forecast.daily.slice(0, 10).forEach((forecast, index) => {
         const source = getVesselBasedSource(vesselName, 'api');
-        
+
         // Create individual deltas for each data point
         Object.entries(forecast).forEach(([key, value]) => {
           if (value !== undefined) {
             let processedValue = value;
             const camelKey = toCamelCase(key);
-            
+
             // Apply unit conversions
             if (key === 'air_temp_high' || key === 'air_temp_low') {
               processedValue = (value as number) + 273.15; // °C to K
             }
-            
+
             // Add ISO datetime fields
-            if (key === 'day_start_local' || key === 'sunrise' || key === 'sunset') {
+            if (
+              key === 'day_start_local' ||
+              key === 'sunrise' ||
+              key === 'sunset'
+            ) {
               processedValue = value;
               // Also create ISO version
               const isoKey = `${toCamelCase(key)}Iso`;
@@ -1160,7 +1211,7 @@ export = function (app: SignalKApp): SignalKPlugin {
               );
               app.handleMessage(plugin.id, isoDelta);
             }
-            
+
             const delta = createSignalKDelta(
               `environment.outside.tempest.forecast.daily.${camelKey}.${index}`,
               processedValue,

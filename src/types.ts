@@ -17,7 +17,12 @@ export interface SignalKApp {
   registerPutHandler: (
     context: string,
     path: string,
-    handler: (context: string, path: string, value: any, callback?: (result: { state: string; statusCode?: number }) => void) => { state: string; statusCode?: number },
+    handler: (
+      context: string,
+      path: string,
+      value: any,
+      callback?: (result: { state: string; statusCode?: number }) => void
+    ) => { state: string; statusCode?: number },
     source?: string
   ) => void;
 }

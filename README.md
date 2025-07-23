@@ -39,6 +39,48 @@ This SignalK plugin integrates WeatherFlow weather station, in particular the Te
 - **Enable Forecast**: Fetch forecast data from WeatherFlow API
 - **Forecast Interval**: How often to fetch forecast data (minutes)
 - **Enable Wind Calculations**: Calculate derived wind values
+- **Enable PUT Control**: Allow external control of individual services via PUT requests
+
+## External Control (PUT Operations)
+
+The plugin supports external control of individual services via SignalK PUT requests. This allows other applications or automation systems to dynamically enable/disable specific plugin functions.
+
+### Configuration
+
+Enable PUT control in the plugin configuration and optionally customize the control paths:
+
+- **Enable PUT Control**: Enable external PUT control functionality
+- **WebSocket Control Path**: SignalK path for WebSocket control (default: `network.weatherflow.webSocket.state`)
+- **Forecast Control Path**: SignalK path for forecast control (default: `network.weatherflow.forecast.state`)
+- **Wind Calculations Control Path**: SignalK path for wind calculations control (default: `network.weatherflow.windCalculations.state`)
+
+### Usage
+
+Send PUT requests to the configured paths with boolean values:
+
+```json
+{
+  "context": "vessels.self",
+  "requestId": "unique-request-id",
+  "put": {
+    "path": "network.weatherflow.webSocket.state",
+    "value": true
+  }
+}
+```
+
+### Control Paths
+
+- **WebSocket Control** (`network.weatherflow.webSocket.state`): Enable/disable WebSocket connection
+- **Forecast Control** (`network.weatherflow.forecast.state`): Enable/disable forecast data fetching
+- **Wind Calculations Control** (`network.weatherflow.windCalculations.state`): Enable/disable wind calculations
+
+### State Synchronization
+
+- PUT changes are automatically synchronized with the admin interface checkboxes
+- Changes persist across plugin restarts
+- The current state is published to the control paths and can be monitored by external applications
+- Configuration remains the primary source of truth, updated when PUT requests change states
 
 ## Data Paths
 
