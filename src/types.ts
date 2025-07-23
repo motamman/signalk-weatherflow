@@ -36,6 +36,8 @@ export interface PluginConfig {
   forecastInterval: number;
   enableWindCalculations: boolean;
   deviceId: number;
+  enablePutControl: boolean;
+  putControlPath: string;
 }
 
 // Plugin state
@@ -47,6 +49,8 @@ export interface PluginState {
   windCalculations: any;
   navigationSubscriptions: Array<() => void>;
   currentConfig?: PluginConfig;
+  isEnabled: boolean;
+  putHandler?: () => void;
 }
 
 // WeatherFlow message types

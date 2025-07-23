@@ -47,6 +47,8 @@ export = function (app: SignalKApp): SignalKPlugin {
     windCalculations: null,
     navigationSubscriptions: [],
     currentConfig: undefined,
+    isEnabled: true,
+    putHandler: undefined,
   };
 
   // Configuration schema
@@ -109,6 +111,18 @@ export = function (app: SignalKApp): SignalKPlugin {
         description: 'Your WeatherFlow device ID for WebSocket connection',
         default: 405588,
       },
+      enablePutControl: {
+        type: 'boolean',
+        title: 'Enable PUT Control',
+        description: 'Allow external control of plugin via PUT requests',
+        default: false,
+      },
+      putControlPath: {
+        type: 'string',
+        title: 'PUT Control Path',
+        description: 'SignalK path for PUT control (e.g., electrical.switches.weatherflow.state)',
+        default: 'electrical.switches.weatherflow.state',
+      },
     },
   };
 
@@ -140,6 +154,136 @@ export = function (app: SignalKApp): SignalKPlugin {
     return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
   }
 
+  // Setup PUT control for external plugin control
+  function setupPutControl(config: PluginConfig): void {
+    // Subscribe to changes on the control path to allow external toggling
+    const subscriptionRequest: SubscriptionRequest = {
+      context: 'vessels.self',
+      subscribe: [
+        {
+          path: config.putControlPath,
+          policy: 'ideal',
+          period: 200,
+          format: 'delta',
+        },
+      ],
+    };
+
+    const unsubscribes: Array<() => void> = [];
+    
+    const subscriptionError = (err: unknown): void => {
+      app.error(`PUT control subscription error: ${err}`);
+    };
+
+    const dataCallback = (delta: SignalKDelta): void => {
+      if (delta.updates) {
+        delta.updates.forEach(update => {
+          if (update.values) {
+            update.values.forEach(valueUpdate => {
+              if (valueUpdate.path === config.putControlPath) {
+                const newState = Boolean(valueUpdate.value);
+                const wasEnabled = state.isEnabled;
+                
+                if (newState !== wasEnabled) {
+                  state.isEnabled = newState;
+                  
+                  if (newState && !wasEnabled) {
+                    // Enable plugin functionality
+                    app.debug('Enabling WeatherFlow plugin via PUT control');
+                    if (state.currentConfig) {
+                      startPluginServices(state.currentConfig);
+                    }
+                    app.setProviderStatus('WeatherFlow plugin enabled via external control');
+                  } else if (!newState && wasEnabled) {
+                    // Disable plugin functionality
+                    app.debug('Disabling WeatherFlow plugin via PUT control');
+                    stopPluginServices();
+                    app.setProviderStatus('WeatherFlow plugin disabled via external control');
+                  }
+                }
+              }
+            });
+          }
+        });
+      }
+    };
+
+    app.subscriptionmanager.subscribe(
+      subscriptionRequest,
+      unsubscribes,
+      subscriptionError,
+      dataCallback
+    );
+
+    state.putHandler = () => {
+      unsubscribes.forEach(unsub => unsub());
+    };
+    
+    // Publish initial state
+    const initialDelta = createSignalKDelta(
+      config.putControlPath,
+      state.isEnabled,
+      getVesselBasedSource(config.vesselName, 'control')
+    );
+    app.handleMessage(plugin.id, initialDelta);
+    
+    app.debug(`PUT control enabled on path: ${config.putControlPath} (via subscription)`);
+  }
+
+  // Start plugin services (factored out for PUT control)
+  function startPluginServices(config: PluginConfig): void {
+    // Initialize wind calculations if enabled
+    if (config.enableWindCalculations) {
+      state.windCalculations = new WindCalculations(app, config.vesselName);
+      setupNavigationSubscriptions();
+    }
+
+    // Initialize UDP listener
+    startUdpServer(config.udpPort, config);
+
+    // Initialize WebSocket connection
+    if (config.enableWebSocket && config.apiToken) {
+      startWebSocketConnection(
+        config.apiToken,
+        config.deviceId,
+        config.vesselName
+      );
+    }
+
+    // Initialize forecast data fetching
+    if (config.enableForecast && config.apiToken && config.stationId) {
+      startForecastFetching(config);
+    }
+  }
+
+  // Stop plugin services (factored out for PUT control)
+  function stopPluginServices(): void {
+    // Stop UDP server
+    if (state.udpServer) {
+      state.udpServer.close();
+      state.udpServer = null;
+    }
+
+    // Close WebSocket connection
+    if (state.wsConnection) {
+      state.wsConnection.close();
+      state.wsConnection = null;
+    }
+
+    // Clear forecast interval
+    if (state.forecastInterval) {
+      clearInterval(state.forecastInterval);
+      state.forecastInterval = null;
+    }
+
+    // Unsubscribe from navigation data
+    state.navigationSubscriptions.forEach(unsub => unsub());
+    state.navigationSubscriptions = [];
+
+    // Clear wind calculations
+    state.windCalculations = null;
+  }
+
   // Plugin start function
   plugin.start = function (
     options: Partial<PluginConfig>,
@@ -160,34 +304,19 @@ export = function (app: SignalKApp): SignalKPlugin {
       forecastInterval: options.forecastInterval || 30,
       enableWindCalculations: options.enableWindCalculations !== false,
       deviceId: options.deviceId || 405588,
+      enablePutControl: options.enablePutControl === true,
+      putControlPath: options.putControlPath || 'electrical.switches.weatherflow.state',
     };
 
     state.currentConfig = config;
     plugin.config = config;
 
-    // Initialize wind calculations if enabled
-    if (config.enableWindCalculations) {
-      state.windCalculations = new WindCalculations(app, config.vesselName);
-      setupNavigationSubscriptions();
-    }
+    // Start plugin services
+    startPluginServices(config);
 
-    // Initialize UDP server for WeatherFlow broadcasts
-    if (config.udpPort) {
-      startUdpServer(config.udpPort, config);
-    }
-
-    // Initialize WebSocket connection
-    if (config.enableWebSocket && config.apiToken) {
-      startWebSocketConnection(
-        config.apiToken,
-        config.deviceId,
-        config.vesselName
-      );
-    }
-
-    // Initialize forecast data fetching
-    if (config.enableForecast && config.apiToken && config.stationId) {
-      startForecastFetching(config);
+    // Initialize PUT control if enabled
+    if (config.enablePutControl) {
+      setupPutControl(config);
     }
 
     app.debug('WeatherFlow plugin started successfully');
@@ -198,19 +327,13 @@ export = function (app: SignalKApp): SignalKPlugin {
   plugin.stop = function (): void {
     app.debug('Stopping WeatherFlow plugin');
 
-    if (state.udpServer) {
-      state.udpServer.close();
-      state.udpServer = null;
-    }
+    // Stop plugin services
+    stopPluginServices();
 
-    if (state.wsConnection) {
-      state.wsConnection.close();
-      state.wsConnection = null;
-    }
-
-    if (state.forecastInterval) {
-      clearInterval(state.forecastInterval);
-      state.forecastInterval = null;
+    // Clean up PUT handler
+    if (state.putHandler) {
+      state.putHandler();
+      state.putHandler = undefined;
     }
 
     if (state.windyInterval) {
@@ -218,15 +341,8 @@ export = function (app: SignalKApp): SignalKPlugin {
       state.windyInterval = null;
     }
 
-    // Clean up navigation subscriptions
-    state.navigationSubscriptions.forEach(unsubscribe => {
-      if (typeof unsubscribe === 'function') {
-        unsubscribe();
-      }
-    });
-    state.navigationSubscriptions = [];
-
     app.debug('WeatherFlow plugin stopped');
+    app.setProviderStatus('WeatherFlow plugin stopped');
   };
 
   // Setup navigation data subscriptions for wind calculations
