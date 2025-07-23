@@ -220,8 +220,14 @@ export = function (app: SignalKApp): SignalKPlugin {
       // Store handler for cleanup
       state.putHandlers.set(path, putHandler);
       
-      // Publish initial state
-      const initialState = getServiceState(service);
+      // Initialize service state from config and publish initial state
+      const initialState = initializeServiceState(service, config);
+      switch (service) {
+        case 'webSocket': state.webSocketEnabled = initialState; break;
+        case 'forecast': state.forecastEnabled = initialState; break;
+        case 'windCalculations': state.windCalculationsEnabled = initialState; break;
+      }
+      
       const initialDelta = createSignalKDelta(
         path,
         initialState,
@@ -278,6 +284,16 @@ export = function (app: SignalKApp): SignalKPlugin {
       case 'webSocket': return state.webSocketEnabled;
       case 'forecast': return state.forecastEnabled;
       case 'windCalculations': return state.windCalculationsEnabled;
+      default: return false;
+    }
+  }
+
+  // Initialize service state based on config
+  function initializeServiceState(service: string, config: PluginConfig): boolean {
+    switch (service) {
+      case 'webSocket': return config.enableWebSocket;
+      case 'forecast': return config.enableForecast;
+      case 'windCalculations': return config.enableWindCalculations;
       default: return false;
     }
   }
@@ -364,6 +380,15 @@ export = function (app: SignalKApp): SignalKPlugin {
 
     state.currentConfig = config;
     plugin.config = config;
+
+    // Initialize service states based on configuration
+    // If PUT control is disabled, services follow config settings
+    // If PUT control is enabled, they start as enabled and can be controlled externally
+    if (!config.enablePutControl) {
+      state.webSocketEnabled = config.enableWebSocket;
+      state.forecastEnabled = config.enableForecast;
+      state.windCalculationsEnabled = config.enableWindCalculations;
+    }
 
     // Start plugin services
     startPluginServices(config);
@@ -731,6 +756,10 @@ export = function (app: SignalKApp): SignalKPlugin {
     data: WebSocketMessage,
     vesselName?: string
   ): void {
+    // Check if WebSocket processing is enabled
+    if (!state.webSocketEnabled) {
+      return;
+    }
     // Flatten summary and status properties
     if (data.summary && typeof data.summary === 'object') {
       Object.assign(data, data.summary);
@@ -1002,6 +1031,10 @@ export = function (app: SignalKApp): SignalKPlugin {
 
   // Process forecast data
   function processForecastData(data: ForecastData, vesselName?: string): void {
+    // Check if forecast processing is enabled
+    if (!state.forecastEnabled) {
+      return;
+    }
     // Process current conditions
     if (data.current_conditions) {
       const delta = createSignalKDelta(
