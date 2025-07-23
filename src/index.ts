@@ -843,69 +843,83 @@ export = function (app: SignalKApp): SignalKPlugin {
     // Process hourly forecast (first 72 hours)
     if (data.forecast && data.forecast.hourly) {
       data.forecast.hourly.slice(0, 72).forEach((forecast, index) => {
-        // Convert units
-        if (forecast.air_temperature !== undefined) {
-          forecast.air_temperature += 273.15; // °C to K
-        }
-        if (forecast.feels_like !== undefined) {
-          forecast.feels_like += 273.15; // °C to K
-        }
-        if (forecast.sea_level_pressure !== undefined) {
-          forecast.sea_level_pressure *= 100; // MB to Pa
-        }
-        if (forecast.station_pressure !== undefined) {
-          forecast.station_pressure *= 100; // MB to Pa
-        }
-        if (forecast.wind_direction !== undefined) {
-          forecast.wind_direction *= Math.PI / 180; // degrees to radians
-        }
-
-        // Add datetime
-        if (forecast.time) {
-          forecast.datetime = new Date(forecast.time * 1000).toISOString();
-        }
-
-        const delta = createSignalKDelta(
-          `environment.outside.tempest.forecast.hourly.${index}`,
-          forecast,
-          getVesselBasedSource(vesselName, 'api')
-        );
-        app.handleMessage(plugin.id, delta);
+        const source = getVesselBasedSource(vesselName, 'api');
+        
+        // Create individual deltas for each data point
+        Object.entries(forecast).forEach(([key, value]) => {
+          if (value !== undefined) {
+            let processedValue = value;
+            
+            // Apply unit conversions
+            if (key === 'air_temperature' || key === 'feels_like') {
+              processedValue = (value as number) + 273.15; // °C to K
+            } else if (key === 'sea_level_pressure' || key === 'station_pressure') {
+              processedValue = (value as number) * 100; // MB to Pa
+            } else if (key === 'wind_direction') {
+              processedValue = (value as number) * Math.PI / 180; // degrees to radians
+            }
+            
+            // Add datetime field for time
+            if (key === 'time') {
+              processedValue = value;
+              // Also create datetime version
+              const datetimeValue = new Date((value as number) * 1000).toISOString();
+              const datetimeDelta = createSignalKDelta(
+                `environment.outside.tempest.forecast.hourly.datetime.${index}`,
+                datetimeValue,
+                source
+              );
+              app.handleMessage(plugin.id, datetimeDelta);
+            }
+            
+            const delta = createSignalKDelta(
+              `environment.outside.tempest.forecast.hourly.${key}.${index}`,
+              processedValue,
+              source
+            );
+            app.handleMessage(plugin.id, delta);
+          }
+        });
       });
     }
 
     // Process daily forecast (first 10 days)
     if (data.forecast && data.forecast.daily) {
       data.forecast.daily.slice(0, 10).forEach((forecast, index) => {
-        // Convert units
-        if (forecast.air_temp_high !== undefined) {
-          forecast.air_temp_high += 273.15; // °C to K
-        }
-        if (forecast.air_temp_low !== undefined) {
-          forecast.air_temp_low += 273.15; // °C to K
-        }
-
-        // Add datetime
-        if (forecast.day_start_local) {
-          forecast.day_start_local_iso = new Date(
-            forecast.day_start_local * 1000
-          ).toISOString();
-        }
-        if (forecast.sunrise) {
-          forecast.sunrise_iso = new Date(
-            forecast.sunrise * 1000
-          ).toISOString();
-        }
-        if (forecast.sunset) {
-          forecast.sunset_iso = new Date(forecast.sunset * 1000).toISOString();
-        }
-
-        const delta = createSignalKDelta(
-          `environment.outside.tempest.forecast.daily.${index}`,
-          forecast,
-          getVesselBasedSource(vesselName, 'api')
-        );
-        app.handleMessage(plugin.id, delta);
+        const source = getVesselBasedSource(vesselName, 'api');
+        
+        // Create individual deltas for each data point
+        Object.entries(forecast).forEach(([key, value]) => {
+          if (value !== undefined) {
+            let processedValue = value;
+            
+            // Apply unit conversions
+            if (key === 'air_temp_high' || key === 'air_temp_low') {
+              processedValue = (value as number) + 273.15; // °C to K
+            }
+            
+            // Add ISO datetime fields
+            if (key === 'day_start_local' || key === 'sunrise' || key === 'sunset') {
+              processedValue = value;
+              // Also create ISO version
+              const isoKey = `${key}_iso`;
+              const isoValue = new Date((value as number) * 1000).toISOString();
+              const isoDelta = createSignalKDelta(
+                `environment.outside.tempest.forecast.daily.${isoKey}.${index}`,
+                isoValue,
+                source
+              );
+              app.handleMessage(plugin.id, isoDelta);
+            }
+            
+            const delta = createSignalKDelta(
+              `environment.outside.tempest.forecast.daily.${key}.${index}`,
+              processedValue,
+              source
+            );
+            app.handleMessage(plugin.id, delta);
+          }
+        });
       });
     }
   }
