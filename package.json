@@ -24,7 +24,7 @@
     "signalk-node-server-plugin",
     "signalk-category-weather",
     "signalk-category-instruments",
-    "zennora-signalk-weatherflow",
+    "signalk-weatherflow",
     "weatherflow",
     "weather",
     "signalk",
