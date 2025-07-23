@@ -220,17 +220,11 @@ export = function (app: SignalKApp): SignalKPlugin {
       // Store handler for cleanup
       state.putHandlers.set(path, putHandler);
       
-      // Initialize service state from config and publish initial state
-      const initialState = initializeServiceState(service, config);
-      switch (service) {
-        case 'webSocket': state.webSocketEnabled = initialState; break;
-        case 'forecast': state.forecastEnabled = initialState; break;
-        case 'windCalculations': state.windCalculationsEnabled = initialState; break;
-      }
-      
+      // Publish current state (which reflects config checkboxes)
+      const currentState = getServiceState(service);
       const initialDelta = createSignalKDelta(
         path,
-        initialState,
+        currentState,
         getVesselBasedSource(config.vesselName, 'control')
       );
       app.handleMessage(plugin.id, initialDelta);
@@ -288,15 +282,6 @@ export = function (app: SignalKApp): SignalKPlugin {
     }
   }
 
-  // Initialize service state based on config
-  function initializeServiceState(service: string, config: PluginConfig): boolean {
-    switch (service) {
-      case 'webSocket': return config.enableWebSocket;
-      case 'forecast': return config.enableForecast;
-      case 'windCalculations': return config.enableWindCalculations;
-      default: return false;
-    }
-  }
 
   // Start plugin services (factored out for PUT control)
   function startPluginServices(config: PluginConfig): void {
@@ -381,14 +366,11 @@ export = function (app: SignalKApp): SignalKPlugin {
     state.currentConfig = config;
     plugin.config = config;
 
-    // Initialize service states based on configuration
-    // If PUT control is disabled, services follow config settings
-    // If PUT control is enabled, they start as enabled and can be controlled externally
-    if (!config.enablePutControl) {
-      state.webSocketEnabled = config.enableWebSocket;
-      state.forecastEnabled = config.enableForecast;
-      state.windCalculationsEnabled = config.enableWindCalculations;
-    }
+    // Always initialize service states from configuration
+    // Config checkboxes are the master control
+    state.webSocketEnabled = config.enableWebSocket;
+    state.forecastEnabled = config.enableForecast;
+    state.windCalculationsEnabled = config.enableWindCalculations;
 
     // Start plugin services
     startPluginServices(config);
