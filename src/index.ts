@@ -30,8 +30,8 @@ import {
 
 export = function (app: SignalKApp): SignalKPlugin {
   const plugin: SignalKPlugin = {
-    id: 'zennora-signalk-weatherflow',
-    name: 'Zennora WeatherFlow Ingester',
+    id: 'signalk-weatherflow',
+    name: 'SignalK WeatherFlow Ingester',
     description:
       'Ingests data from WeatherFlow weather stations via UDP, WebSocket, and API',
     schema: {},
@@ -126,11 +126,11 @@ export = function (app: SignalKApp): SignalKPlugin {
     configuredPrefix: string | undefined,
     suffix: string
   ): string {
-    // Use configured prefix if provided, otherwise default to "zennora" for now
+    // Use configured prefix if provided, otherwise default to "signalk" for now
     const vesselPrefix =
       configuredPrefix && configuredPrefix.trim()
         ? configuredPrefix
-        : 'zennora';
+        : 'signalk';
     const formattedName = formatSourceName(vesselPrefix);
     return `${formattedName}-weatherflow-${suffix}`;
   }
