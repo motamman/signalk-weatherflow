@@ -202,6 +202,27 @@ export = function (app: SignalKApp): SignalKPlugin {
     }
   }
 
+  // Update plugin configuration to match current state
+  function updatePluginConfig(): void {
+    if (!state.currentConfig) return;
+    
+    const updatedConfig = {
+      ...state.currentConfig,
+      enableWebSocket: state.webSocketEnabled,
+      enableForecast: state.forecastEnabled,
+      enableWindCalculations: state.windCalculationsEnabled,
+    };
+    
+    app.savePluginOptions(updatedConfig, (err?: any) => {
+      if (err) {
+        app.error('Could not save plugin configuration: ' + err.message);
+      } else {
+        app.debug('Plugin configuration updated to match PUT state changes');
+        state.currentConfig = updatedConfig;
+      }
+    });
+  }
+
   // Setup PUT control for individual service control
   function setupPutControl(config: PluginConfig): void {
     const controlPaths = [
@@ -226,6 +247,9 @@ export = function (app: SignalKApp): SignalKPlugin {
           
           // Save the new state to persist across restarts
           savePersistedState();
+          
+          // Update plugin configuration so checkboxes reflect the change
+          updatePluginConfig();
           
           // Publish updated state
           const updatedDelta = createSignalKDelta(
@@ -402,11 +426,11 @@ export = function (app: SignalKApp): SignalKPlugin {
     state.currentConfig = config;
     plugin.config = config;
 
-    // Load persisted state, fall back to config defaults
-    const persistedState = loadPersistedState();
-    state.webSocketEnabled = persistedState.webSocketEnabled ?? config.enableWebSocket;
-    state.forecastEnabled = persistedState.forecastEnabled ?? config.enableForecast;
-    state.windCalculationsEnabled = persistedState.windCalculationsEnabled ?? config.enableWindCalculations;
+    // Initialize service states from configuration
+    // Config is now the primary source of truth, kept in sync by PUT handlers
+    state.webSocketEnabled = config.enableWebSocket;
+    state.forecastEnabled = config.enableForecast;
+    state.windCalculationsEnabled = config.enableWindCalculations;
 
     // Start plugin services
     startPluginServices(config);
