@@ -47,8 +47,10 @@ export = function (app: SignalKApp): SignalKPlugin {
     windCalculations: null,
     navigationSubscriptions: [],
     currentConfig: undefined,
-    isEnabled: true,
-    putHandler: undefined,
+    webSocketEnabled: true,
+    forecastEnabled: true,
+    windCalculationsEnabled: true,
+    putHandlers: [],
   };
 
   // Configuration schema
@@ -114,14 +116,26 @@ export = function (app: SignalKApp): SignalKPlugin {
       enablePutControl: {
         type: 'boolean',
         title: 'Enable PUT Control',
-        description: 'Allow external control of plugin via PUT requests',
+        description: 'Allow external control of individual plugin services via PUT requests',
         default: false,
       },
-      putControlPath: {
+      webSocketControlPath: {
         type: 'string',
-        title: 'PUT Control Path',
-        description: 'SignalK path for PUT control (e.g., electrical.switches.weatherflow.state)',
-        default: 'electrical.switches.weatherflow.state',
+        title: 'WebSocket Control Path',
+        description: 'SignalK path for WebSocket control',
+        default: 'network.weatherflow.webSocket.state',
+      },
+      forecastControlPath: {
+        type: 'string',
+        title: 'Forecast Control Path',
+        description: 'SignalK path for forecast control',
+        default: 'network.weatherflow.forecast.state',
+      },
+      windCalculationsControlPath: {
+        type: 'string',
+        title: 'Wind Calculations Control Path',
+        description: 'SignalK path for wind calculations control',
+        default: 'network.weatherflow.windCalculations.state',
       },
     },
   };
@@ -154,95 +168,134 @@ export = function (app: SignalKApp): SignalKPlugin {
     return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
   }
 
-  // Setup PUT control for external plugin control
+  // Setup PUT control for individual service control
   function setupPutControl(config: PluginConfig): void {
-    // Subscribe to changes on the control path to allow external toggling
-    const subscriptionRequest: SubscriptionRequest = {
-      context: 'vessels.self',
-      subscribe: [
-        {
-          path: config.putControlPath,
-          policy: 'ideal',
-          period: 200,
-          format: 'delta',
-        },
-      ],
-    };
+    const controlPaths = [
+      { path: config.webSocketControlPath, service: 'webSocket' },
+      { path: config.forecastControlPath, service: 'forecast' },
+      { path: config.windCalculationsControlPath, service: 'windCalculations' }
+    ];
 
-    const unsubscribes: Array<() => void> = [];
-    
-    const subscriptionError = (err: unknown): void => {
-      app.error(`PUT control subscription error: ${err}`);
-    };
+    controlPaths.forEach(({ path, service }) => {
+      const subscriptionRequest: SubscriptionRequest = {
+        context: 'vessels.self',
+        subscribe: [
+          {
+            path: path,
+            policy: 'ideal',
+            period: 200,
+            format: 'delta',
+          },
+        ],
+      };
 
-    const dataCallback = (delta: SignalKDelta): void => {
-      if (delta.updates) {
-        delta.updates.forEach(update => {
-          if (update.values) {
-            update.values.forEach(valueUpdate => {
-              if (valueUpdate.path === config.putControlPath) {
-                const newState = Boolean(valueUpdate.value);
-                const wasEnabled = state.isEnabled;
-                
-                if (newState !== wasEnabled) {
-                  state.isEnabled = newState;
-                  
-                  if (newState && !wasEnabled) {
-                    // Enable plugin functionality
-                    app.debug('Enabling WeatherFlow plugin via PUT control');
-                    if (state.currentConfig) {
-                      startPluginServices(state.currentConfig);
-                    }
-                    app.setProviderStatus('WeatherFlow plugin enabled via external control');
-                  } else if (!newState && wasEnabled) {
-                    // Disable plugin functionality
-                    app.debug('Disabling WeatherFlow plugin via PUT control');
-                    stopPluginServices();
-                    app.setProviderStatus('WeatherFlow plugin disabled via external control');
-                  }
+      const unsubscribes: Array<() => void> = [];
+      
+      const subscriptionError = (err: unknown): void => {
+        app.error(`PUT control subscription error for ${service}: ${err}`);
+      };
+
+      const dataCallback = (delta: SignalKDelta): void => {
+        if (delta.updates) {
+          delta.updates.forEach(update => {
+            if (update.values) {
+              update.values.forEach(valueUpdate => {
+                if (valueUpdate.path === path) {
+                  const newState = Boolean(valueUpdate.value);
+                  handleServiceControl(service, newState, config);
                 }
-              }
-            });
-          }
-        });
+              });
+            }
+          });
+        }
+      };
+
+      app.subscriptionmanager.subscribe(
+        subscriptionRequest,
+        unsubscribes,
+        subscriptionError,
+        dataCallback
+      );
+
+      state.putHandlers.push(() => {
+        unsubscribes.forEach(unsub => unsub());
+      });
+      
+      // Publish initial state
+      const initialState = getServiceState(service);
+      const initialDelta = createSignalKDelta(
+        path,
+        initialState,
+        getVesselBasedSource(config.vesselName, 'control')
+      );
+      app.handleMessage(plugin.id, initialDelta);
+      
+      app.debug(`PUT control enabled for ${service} on path: ${path}`);
+    });
+  }
+
+  // Handle individual service control
+  function handleServiceControl(service: string, newState: boolean, config: PluginConfig): void {
+    const currentState = getServiceState(service);
+    
+    if (newState !== currentState) {
+      app.debug(`${newState ? 'Enabling' : 'Disabling'} ${service} via PUT control`);
+      
+      if (service === 'webSocket') {
+        state.webSocketEnabled = newState;
+        if (newState && config.enableWebSocket && config.apiToken) {
+          startWebSocketConnection(config.apiToken, config.deviceId, config.vesselName);
+        } else if (!newState && state.wsConnection) {
+          state.wsConnection.close();
+          state.wsConnection = null;
+        }
+      } else if (service === 'forecast') {
+        state.forecastEnabled = newState;
+        if (newState && config.enableForecast && config.apiToken && config.stationId) {
+          startForecastFetching(config);
+        } else if (!newState && state.forecastInterval) {
+          clearInterval(state.forecastInterval);
+          state.forecastInterval = null;
+        }
+      } else if (service === 'windCalculations') {
+        state.windCalculationsEnabled = newState;
+        if (newState && config.enableWindCalculations) {
+          state.windCalculations = new WindCalculations(app, config.vesselName);
+          setupNavigationSubscriptions();
+        } else if (!newState) {
+          state.navigationSubscriptions.forEach(unsub => unsub());
+          state.navigationSubscriptions = [];
+          state.windCalculations = null;
+        }
       }
-    };
+      
+      app.setProviderStatus(`WeatherFlow ${service} ${newState ? 'enabled' : 'disabled'} via external control`);
+    }
+  }
 
-    app.subscriptionmanager.subscribe(
-      subscriptionRequest,
-      unsubscribes,
-      subscriptionError,
-      dataCallback
-    );
-
-    state.putHandler = () => {
-      unsubscribes.forEach(unsub => unsub());
-    };
-    
-    // Publish initial state
-    const initialDelta = createSignalKDelta(
-      config.putControlPath,
-      state.isEnabled,
-      getVesselBasedSource(config.vesselName, 'control')
-    );
-    app.handleMessage(plugin.id, initialDelta);
-    
-    app.debug(`PUT control enabled on path: ${config.putControlPath} (via subscription)`);
+  // Get current state of a service
+  function getServiceState(service: string): boolean {
+    switch (service) {
+      case 'webSocket': return state.webSocketEnabled;
+      case 'forecast': return state.forecastEnabled;
+      case 'windCalculations': return state.windCalculationsEnabled;
+      default: return false;
+    }
   }
 
   // Start plugin services (factored out for PUT control)
   function startPluginServices(config: PluginConfig): void {
-    // Initialize wind calculations if enabled
-    if (config.enableWindCalculations) {
+    // Initialize wind calculations if enabled and not controlled externally
+    if (config.enableWindCalculations && state.windCalculationsEnabled) {
       state.windCalculations = new WindCalculations(app, config.vesselName);
       setupNavigationSubscriptions();
     }
 
-    // Initialize UDP listener
+    // Initialize UDP listener (always enabled - not controlled separately)
     startUdpServer(config.udpPort, config);
 
-    // Initialize WebSocket connection
-    if (config.enableWebSocket && config.apiToken) {
+    // Initialize WebSocket connection if enabled and not controlled externally
+    if (config.enableWebSocket && config.apiToken && state.webSocketEnabled) {
       startWebSocketConnection(
         config.apiToken,
         config.deviceId,
@@ -250,8 +303,8 @@ export = function (app: SignalKApp): SignalKPlugin {
       );
     }
 
-    // Initialize forecast data fetching
-    if (config.enableForecast && config.apiToken && config.stationId) {
+    // Initialize forecast data fetching if enabled and not controlled externally
+    if (config.enableForecast && config.apiToken && config.stationId && state.forecastEnabled) {
       startForecastFetching(config);
     }
   }
@@ -305,7 +358,9 @@ export = function (app: SignalKApp): SignalKPlugin {
       enableWindCalculations: options.enableWindCalculations !== false,
       deviceId: options.deviceId || 405588,
       enablePutControl: options.enablePutControl === true,
-      putControlPath: options.putControlPath || 'electrical.switches.weatherflow.state',
+      webSocketControlPath: options.webSocketControlPath || 'network.weatherflow.webSocket.state',
+      forecastControlPath: options.forecastControlPath || 'network.weatherflow.forecast.state',
+      windCalculationsControlPath: options.windCalculationsControlPath || 'network.weatherflow.windCalculations.state',
     };
 
     state.currentConfig = config;
@@ -330,11 +385,9 @@ export = function (app: SignalKApp): SignalKPlugin {
     // Stop plugin services
     stopPluginServices();
 
-    // Clean up PUT handler
-    if (state.putHandler) {
-      state.putHandler();
-      state.putHandler = undefined;
-    }
+    // Clean up PUT handlers
+    state.putHandlers.forEach(handler => handler());
+    state.putHandlers = [];
 
     if (state.windyInterval) {
       clearInterval(state.windyInterval);
