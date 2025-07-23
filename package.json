@@ -1,6 +1,6 @@
 {
   "name": "signalk-weatherflow",
-  "version": "0.5.0-alpha.1",
+  "version": "0.5.0-alpha.2",
   "description": "SignalK plugin for WeatherFlow weather station data ingestion",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
