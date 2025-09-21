@@ -27,6 +27,15 @@ import {
   SubscriptionValue,
   WindInput,
   PutHandler,
+  WeatherProvider,
+  WeatherProviderMethods,
+  WeatherData,
+  WeatherReqParams,
+  WeatherForecastType,
+  WeatherWarning,
+  Position,
+  TendencyKind,
+  PrecipitationKind,
 } from './types';
 
 export = function (app: SignalKApp): SignalKPlugin {
@@ -52,6 +61,10 @@ export = function (app: SignalKApp): SignalKPlugin {
     forecastEnabled: true,
     windCalculationsEnabled: true,
     putHandlers: new Map(),
+    latestObservations: new Map(),
+    latestForecastData: null,
+    stationLocation: null,
+    currentVesselPosition: null,
   };
 
   // Configuration schema
@@ -138,6 +151,20 @@ export = function (app: SignalKApp): SignalKPlugin {
         title: 'Wind Calculations Control Path',
         description: 'SignalK path for wind calculations control',
         default: 'network.weatherflow.windCalculations.state',
+      },
+      stationLatitude: {
+        type: 'number',
+        title: 'Station Latitude (Optional)',
+        description:
+          'Weather station latitude for Weather API position matching. If not set (0), will use vessel position from navigation.position',
+        default: 0,
+      },
+      stationLongitude: {
+        type: 'number',
+        title: 'Station Longitude (Optional)',
+        description:
+          'Weather station longitude for Weather API position matching. If not set (0), will use vessel position from navigation.position',
+        default: 0,
       },
     },
   };
@@ -378,6 +405,9 @@ export = function (app: SignalKApp): SignalKPlugin {
 
   // Start plugin services (factored out for PUT control)
   function startPluginServices(config: PluginConfig): void {
+    // Set up position subscription for Weather API
+    setupPositionSubscription();
+
     // Initialize wind calculations if enabled and not controlled externally
     if (config.enableWindCalculations && state.windCalculationsEnabled) {
       state.windCalculations = new WindCalculations(app, config.vesselName);
@@ -435,6 +465,144 @@ export = function (app: SignalKApp): SignalKPlugin {
     state.windCalculations = null;
   }
 
+  // Weather API Provider Implementation
+  const weatherProvider: WeatherProvider = {
+    name: 'WeatherFlow Station Weather Provider',
+    methods: {
+      pluginId: 'signalk-weatherflow',
+
+      getObservations: async (
+        position: Position,
+        options?: WeatherReqParams
+      ): Promise<WeatherData[]> => {
+        const observations: WeatherData[] = [];
+        const stationPos = getStationLocation();
+
+        // Check if requested position is within reasonable range of station
+        const distance = calculateDistance(position, stationPos);
+        const maxDistance = 50000; // 50km radius
+
+        if (distance > maxDistance) {
+          app.debug(`Requested position too far from station: ${distance}m`);
+          return observations;
+        }
+
+        // Convert cached observations to Weather API format
+        for (const [type, data] of state.latestObservations) {
+          if (data && data.timestamp) {
+            const weatherData = convertObservationToWeatherAPI(type, data);
+            observations.push(weatherData);
+          }
+        }
+
+        // Apply maxCount limit if specified
+        if (options?.maxCount && observations.length > options.maxCount) {
+          return observations.slice(0, options.maxCount);
+        }
+
+        return observations;
+      },
+
+      getForecasts: async (
+        position: Position,
+        type: WeatherForecastType,
+        options?: WeatherReqParams
+      ): Promise<WeatherData[]> => {
+        const forecasts: WeatherData[] = [];
+        const stationPos = getStationLocation();
+
+        // Check if requested position is within reasonable range of station
+        const distance = calculateDistance(position, stationPos);
+        const maxDistance = 100000; // 100km radius for forecasts
+
+        if (distance > maxDistance) {
+          app.debug(
+            `Requested position too far from station for forecasts: ${distance}m`
+          );
+          return forecasts;
+        }
+
+        if (!state.latestForecastData) {
+          app.debug('No forecast data available');
+          return forecasts;
+        }
+
+        try {
+          if (type === 'point' && state.latestForecastData.forecast?.hourly) {
+            // Convert hourly forecasts
+            const hourlyForecasts =
+              state.latestForecastData.forecast.hourly.slice(0, 72); // 72 hours
+            for (const forecast of hourlyForecasts) {
+              const weatherData = convertForecastToWeatherAPI(
+                forecast,
+                'point'
+              );
+              forecasts.push(weatherData);
+            }
+          } else if (
+            type === 'daily' &&
+            state.latestForecastData.forecast?.daily
+          ) {
+            // Convert daily forecasts
+            const dailyForecasts =
+              state.latestForecastData.forecast.daily.slice(0, 10); // 10 days
+            for (const forecast of dailyForecasts) {
+              const weatherData = convertForecastToWeatherAPI(
+                forecast,
+                'daily'
+              );
+              forecasts.push(weatherData);
+            }
+          }
+
+          // Apply date filtering if startDate specified
+          if (options?.startDate) {
+            const startTime = new Date(options.startDate).getTime();
+            return forecasts.filter(
+              f => new Date(f.date).getTime() >= startTime
+            );
+          }
+
+          // Apply maxCount limit if specified
+          if (options?.maxCount && forecasts.length > options.maxCount) {
+            return forecasts.slice(0, options.maxCount);
+          }
+        } catch (error) {
+          app.error(
+            `Error processing forecast data: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+
+        return forecasts;
+      },
+
+      getWarnings: async (position: Position): Promise<WeatherWarning[]> => {
+        const warnings: WeatherWarning[] = [];
+
+        // Check for lightning warnings based on recent strikes
+        const lightningData = state.latestObservations.get('tempest');
+        if (lightningData && lightningData.lightningStrikeCount > 0) {
+          const lastStrikeTime = new Date(lightningData.timeEpoch * 1000);
+          const warningEndTime = new Date(
+            lastStrikeTime.getTime() + 30 * 60 * 1000
+          ); // 30 minutes after last strike
+
+          if (new Date() < warningEndTime) {
+            warnings.push({
+              startTime: lastStrikeTime.toISOString(),
+              endTime: warningEndTime.toISOString(),
+              details: `Lightning activity detected. ${lightningData.lightningStrikeCount} strikes recorded. Last strike at average distance of ${Math.round(lightningData.lightningStrikeAvgDistance)}m.`,
+              source: 'WeatherFlow Station',
+              type: 'lightning',
+            });
+          }
+        }
+
+        return warnings;
+      },
+    },
+  };
+
   // Plugin start function
   plugin.start = function (
     options: Partial<PluginConfig>,
@@ -463,10 +631,21 @@ export = function (app: SignalKApp): SignalKPlugin {
       windCalculationsControlPath:
         options.windCalculationsControlPath ||
         'network.weatherflow.windCalculations.state',
+      stationLatitude: options.stationLatitude || 0,
+      stationLongitude: options.stationLongitude || 0,
     };
 
     state.currentConfig = config;
     plugin.config = config;
+
+    // Set station location for Weather API
+    if (config.stationLatitude !== 0 && config.stationLongitude !== 0) {
+      state.stationLocation = {
+        latitude: config.stationLatitude!,
+        longitude: config.stationLongitude!,
+        timestamp: new Date(),
+      };
+    }
 
     // Initialize service states from configuration
     // Config is now the primary source of truth, kept in sync by PUT handlers
@@ -476,6 +655,16 @@ export = function (app: SignalKApp): SignalKPlugin {
 
     // Start plugin services
     startPluginServices(config);
+
+    // Register as Weather API provider
+    try {
+      app.registerWeatherProvider(weatherProvider);
+      app.debug('Successfully registered WeatherFlow as Weather API provider');
+    } catch (error) {
+      app.error(
+        `Failed to register Weather API provider: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
 
     // Initialize PUT control if enabled
     if (config.enablePutControl) {
@@ -553,6 +742,60 @@ export = function (app: SignalKApp): SignalKPlugin {
             valueUpdate.path,
             valueUpdate.value
           );
+        }
+      });
+    });
+  }
+
+  // Set up position subscription for Weather API
+  function setupPositionSubscription(): void {
+    const positionSubscription: SubscriptionRequest = {
+      context: 'vessels.self',
+      subscribe: [
+        {
+          path: 'navigation.position',
+          policy: 'fixed',
+          period: 5000, // Update every 5 seconds
+          format: 'delta',
+        },
+      ],
+    };
+
+    app.subscriptionmanager.subscribe(
+      positionSubscription,
+      state.navigationSubscriptions,
+      (subscriptionError: unknown) => {
+        app.debug('Position subscription error: ' + subscriptionError);
+      },
+      (delta: any) => {
+        handlePositionData(delta);
+      }
+    );
+  }
+
+  // Handle position data updates
+  function handlePositionData(delta: any): void {
+    if (!delta.updates) return;
+
+    delta.updates.forEach((update: any) => {
+      if (!update.values) return;
+
+      update.values.forEach((valueUpdate: any) => {
+        if (valueUpdate.path === 'navigation.position' && valueUpdate.value) {
+          const position = valueUpdate.value;
+          if (
+            position.latitude !== undefined &&
+            position.longitude !== undefined
+          ) {
+            state.currentVesselPosition = {
+              latitude: position.latitude,
+              longitude: position.longitude,
+              timestamp: new Date(update.timestamp || Date.now()),
+            };
+            app.debug(
+              `Updated vessel position: ${position.latitude}, ${position.longitude}`
+            );
+          }
         }
       });
     });
@@ -904,6 +1147,208 @@ export = function (app: SignalKApp): SignalKPlugin {
     });
   }
 
+  // Cache latest observation data for Weather API
+  function cacheObservationData(type: string, data: any): void {
+    state.latestObservations.set(type, {
+      ...data,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // Cache forecast data for Weather API
+  function cacheForecastData(data: ForecastData): void {
+    state.latestForecastData = data;
+  }
+
+  // Convert WeatherFlow observation to Weather API format
+  function convertObservationToWeatherAPI(
+    observationType: string,
+    data: any
+  ): WeatherData {
+    const baseWeatherData: WeatherData = {
+      date: data.utcDate || new Date().toISOString(),
+      type: 'observation',
+      description: `WeatherFlow ${observationType} observation`,
+    };
+
+    // Convert Tempest observation data
+    if (observationType === 'tempest') {
+      baseWeatherData.outside = {
+        temperature: data.airTemperature, // Already in Kelvin
+        pressure: data.stationPressure, // Already in Pascal
+        relativeHumidity: data.relativeHumidity, // Already as ratio 0-1
+        uvIndex: data.uvIndex,
+        precipitationVolume: data.rainAccumulated, // Already in meters
+        precipitationType: mapPrecipitationType(data.precipitationType),
+      };
+
+      baseWeatherData.wind = {
+        speedTrue: data.windAvg, // Already in m/s
+        directionTrue: data.windDirection, // Already in radians
+        gust: data.windGust, // Already in m/s
+      };
+    }
+
+    // Convert rapid wind data
+    if (observationType === 'rapidWind') {
+      baseWeatherData.wind = {
+        speedTrue: data.windSpeed, // Already in m/s
+        directionTrue: data.windDirection, // Already in radians
+      };
+    }
+
+    // Convert air station data
+    if (observationType === 'air') {
+      baseWeatherData.outside = {
+        temperature: data.airTemperature, // Already in Kelvin
+        pressure: data.stationPressure, // Already in Pascal
+        relativeHumidity: data.relativeHumidity, // Already as ratio 0-1
+      };
+    }
+
+    return baseWeatherData;
+  }
+
+  // Convert WeatherFlow forecast to Weather API format
+  function convertForecastToWeatherAPI(
+    forecast: any,
+    type: WeatherForecastType
+  ): WeatherData {
+    const baseWeatherData: WeatherData = {
+      date: forecast.datetime || new Date(forecast.time * 1000).toISOString(),
+      type: type,
+      description: `WeatherFlow ${type} forecast`,
+    };
+
+    if (type === 'point') {
+      // Hourly forecast
+      baseWeatherData.outside = {
+        temperature: forecast.air_temperature
+          ? forecast.air_temperature + 273.15
+          : undefined, // Convert °C to K
+        feelsLikeTemperature: forecast.feels_like
+          ? forecast.feels_like + 273.15
+          : undefined,
+        relativeHumidity: forecast.relative_humidity
+          ? forecast.relative_humidity / 100
+          : undefined, // Convert % to ratio
+        precipitationVolume: forecast.precip
+          ? forecast.precip / 1000
+          : undefined, // Convert mm to m
+        pressure: forecast.sea_level_pressure
+          ? forecast.sea_level_pressure * 100
+          : undefined, // Convert MB to Pa
+        uvIndex: forecast.uv,
+      };
+
+      baseWeatherData.wind = {
+        speedTrue: forecast.wind_avg, // Already in m/s
+        directionTrue: forecast.wind_direction
+          ? forecast.wind_direction * (Math.PI / 180)
+          : undefined, // Convert deg to rad
+        gust: forecast.wind_gust,
+      };
+    } else if (type === 'daily') {
+      // Daily forecast
+      baseWeatherData.outside = {
+        maxTemperature: forecast.air_temp_high
+          ? forecast.air_temp_high + 273.15
+          : undefined,
+        minTemperature: forecast.air_temp_low
+          ? forecast.air_temp_low + 273.15
+          : undefined,
+        precipitationType: mapPrecipitationType(forecast.precip_type),
+      };
+
+      baseWeatherData.wind = {
+        speedTrue: forecast.wind_avg,
+        directionTrue: forecast.wind_direction
+          ? forecast.wind_direction * (Math.PI / 180)
+          : undefined,
+      };
+
+      if (forecast.sunrise_iso && forecast.sunset_iso) {
+        baseWeatherData.sun = {
+          sunrise: forecast.sunrise_iso,
+          sunset: forecast.sunset_iso,
+        };
+      }
+    }
+
+    return baseWeatherData;
+  }
+
+  // Map WeatherFlow precipitation type to Weather API format
+  function mapPrecipitationType(
+    precipType: number | string
+  ): PrecipitationKind {
+    if (typeof precipType === 'string') {
+      switch (precipType.toLowerCase()) {
+        case 'rain':
+          return 'rain';
+        case 'snow':
+          return 'snow';
+        case 'thunderstorm':
+          return 'thunderstorm';
+        default:
+          return 'not available';
+      }
+    }
+
+    // WeatherFlow numeric precipitation types
+    switch (precipType) {
+      case 0:
+        return 'not available';
+      case 1:
+        return 'rain';
+      case 2:
+        return 'snow';
+      case 3:
+        return 'mixed/ice';
+      default:
+        return 'not available';
+    }
+  }
+
+  // Get station location from vessel's current position or fallback to configured coordinates
+  function getStationLocation(): Position {
+    // First try to get current vessel position
+    const vesselPosition = getCurrentVesselPosition();
+    if (vesselPosition) {
+      return vesselPosition;
+    }
+
+    // Fallback to manually configured station location
+    return (
+      state.stationLocation || {
+        latitude: 0, // Default coordinates if nothing is configured
+        longitude: 0, // Default coordinates if nothing is configured
+        timestamp: new Date(),
+      }
+    );
+  }
+
+  // Get current vessel position from cached state
+  function getCurrentVesselPosition(): Position | null {
+    return state.currentVesselPosition;
+  }
+
+  // Calculate distance between two positions (haversine formula)
+  function calculateDistance(pos1: Position, pos2: Position): number {
+    const R = 6371000; // Earth's radius in meters
+    const φ1 = (pos1.latitude * Math.PI) / 180;
+    const φ2 = (pos2.latitude * Math.PI) / 180;
+    const Δφ = ((pos2.latitude - pos1.latitude) * Math.PI) / 180;
+    const Δλ = ((pos2.longitude - pos1.longitude) * Math.PI) / 180;
+
+    const a =
+      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c;
+  }
+
   // Process rapid wind observations
   function processRapidWind(data: RapidWindData, config: PluginConfig): void {
     if (!data.ob) return;
@@ -915,6 +1360,9 @@ export = function (app: SignalKApp): SignalKPlugin {
       windDirection, // Will be converted to radians by convertToSignalKUnits
       utcDate: new Date(timeEpoch * 1000).toISOString(),
     };
+
+    // Cache data for Weather API
+    cacheObservationData('rapidWind', windData);
 
     // Send individual deltas for each wind observation
     const timestamp = windData.utcDate;
@@ -995,6 +1443,9 @@ export = function (app: SignalKApp): SignalKPlugin {
       utcDate: new Date(obs[0] * 1000).toISOString(),
     };
 
+    // Cache data for Weather API
+    cacheObservationData('tempest', observationData);
+
     // Send individual deltas for each tempest observation
     const timestamp = observationData.utcDate;
     const source = getVesselBasedSource(config.vesselName, 'udp');
@@ -1039,6 +1490,9 @@ export = function (app: SignalKApp): SignalKPlugin {
       reportInterval: obs[7], // Will be converted to sec by convertToSignalKUnits
       utcDate: new Date(obs[0] * 1000).toISOString(),
     };
+
+    // Cache data for Weather API
+    cacheObservationData('air', observationData);
 
     // Send individual deltas for each air observation
     const timestamp = observationData.utcDate;
@@ -1115,6 +1569,9 @@ export = function (app: SignalKApp): SignalKPlugin {
 
   // Process forecast data
   function processForecastData(data: ForecastData, vesselName?: string): void {
+    // Cache forecast data for Weather API
+    cacheForecastData(data);
+
     // Check if forecast processing is enabled
     if (!state.forecastEnabled) {
       return;
