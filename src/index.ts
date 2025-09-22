@@ -13,6 +13,8 @@ import {
   AirObservationData,
   RainEventData,
   LightningEventData,
+  HubStatusData,
+  DeviceStatusData,
   WebSocketMessage,
   ForecastData,
   ProcessedWindData,
@@ -20,6 +22,8 @@ import {
   ProcessedAirData,
   ProcessedRainData,
   ProcessedLightningData,
+  ProcessedHubStatusData,
+  ProcessedDeviceStatusData,
   ConvertedValue,
   SignalKDelta,
   SignalKUpdate,
@@ -165,6 +169,19 @@ export = function (app: SignalKApp): SignalKPlugin {
         description:
           'Weather station longitude for Weather API position matching. If not set (0), will use vessel position from navigation.position',
         default: 0,
+      },
+      setCurrentLocationAction: {
+        type: 'object',
+        title: 'Home Port Location Actions',
+        description: 'Actions for setting the home port location',
+        properties: {
+          setCurrentLocation: {
+            type: 'boolean',
+            title: 'Set Current Location as Home Port',
+            description: 'Check this box and save to use the vessel\'s current position as the home port coordinates',
+            default: false,
+          },
+        },
       },
     },
   };
@@ -465,6 +482,72 @@ export = function (app: SignalKApp): SignalKPlugin {
     state.windCalculations = null;
   }
 
+  // Handle "Set Current Location" action
+  async function handleSetCurrentLocationAction(config: PluginConfig): Promise<void> {
+    app.debug(`handleSetCurrentLocationAction called with setCurrentLocation: ${config.setCurrentLocationAction?.setCurrentLocation}`);
+
+    if (config.setCurrentLocationAction?.setCurrentLocation) {
+      // First try cached position
+      let currentPosition = getCurrentVesselPosition();
+      app.debug(`Cached position: ${currentPosition ? `${currentPosition.latitude}, ${currentPosition.longitude}` : 'null'}`);
+
+      // If no cached position, try to fetch from SignalK API directly
+      if (!currentPosition) {
+        app.debug('No cached position, trying to fetch from SignalK API...');
+        try {
+          const response = await fetch('http://localhost:3000/signalk/v1/api/vessels/self/navigation/position');
+          if (response.ok) {
+            const positionData = await response.json();
+            if (positionData.value && positionData.value.latitude && positionData.value.longitude) {
+              currentPosition = {
+                latitude: positionData.value.latitude,
+                longitude: positionData.value.longitude,
+                timestamp: new Date(positionData.timestamp || Date.now())
+              };
+              app.debug(`Fetched position from API: ${currentPosition.latitude}, ${currentPosition.longitude}`);
+            }
+          }
+        } catch (error) {
+          app.debug(`Failed to fetch position from API: ${error}`);
+        }
+      }
+
+      if (currentPosition) {
+        // Update the configuration with current position
+        const updatedConfig = {
+          ...config,
+          stationLatitude: currentPosition.latitude,
+          stationLongitude: currentPosition.longitude,
+          setCurrentLocationAction: {
+            setCurrentLocation: false, // Reset the checkbox
+          },
+        };
+
+        // Save the updated configuration
+        app.savePluginOptions(updatedConfig, (err?: unknown) => {
+          if (err) {
+            app.error(`Failed to save current location as home port: ${err}`);
+          } else {
+            app.debug(`Set home port location to: ${currentPosition!.latitude}, ${currentPosition!.longitude}`);
+
+            // Update the state with new station location
+            state.stationLocation = {
+              latitude: currentPosition!.latitude,
+              longitude: currentPosition!.longitude,
+              timestamp: new Date(),
+            };
+
+            // Update current config
+            state.currentConfig = updatedConfig;
+            plugin.config = updatedConfig;
+          }
+        });
+      } else {
+        app.error('No current vessel position available. Ensure navigation.position is being published to SignalK.');
+      }
+    }
+  }
+
   // Weather API Provider Implementation
   const weatherProvider: WeatherProvider = {
     name: 'WeatherFlow Station Weather Provider',
@@ -476,18 +559,9 @@ export = function (app: SignalKApp): SignalKPlugin {
         options?: WeatherReqParams
       ): Promise<WeatherData[]> => {
         const observations: WeatherData[] = [];
-        const stationPos = getStationLocation();
 
-        // Check if requested position is within reasonable range of station
-        const distance = calculateDistance(position, stationPos);
-        const maxDistance = 50000; // 50km radius
-
-        if (distance > maxDistance) {
-          app.debug(`Requested position too far from station: ${distance}m`);
-          return observations;
-        }
-
-        // Convert cached observations to Weather API format
+        // WeatherFlow station is ON THE BOAT - always return current observations
+        // regardless of requested position since the station moves with the vessel
         for (const [type, data] of state.latestObservations) {
           if (data && data.timestamp) {
             const weatherData = convertObservationToWeatherAPI(type, data);
@@ -509,15 +583,16 @@ export = function (app: SignalKApp): SignalKPlugin {
         options?: WeatherReqParams
       ): Promise<WeatherData[]> => {
         const forecasts: WeatherData[] = [];
-        const stationPos = getStationLocation();
 
-        // Check if requested position is within reasonable range of station
+        // For forecasts, check if requested position is near the station's registered location
+        // since forecasts are location-specific and tied to the station's API registration
+        const stationPos = getStationLocation();
         const distance = calculateDistance(position, stationPos);
         const maxDistance = 100000; // 100km radius for forecasts
 
         if (distance > maxDistance) {
           app.debug(
-            `Requested position too far from station for forecasts: ${distance}m`
+            `Requested position too far from station's registered location for forecasts: ${distance}m`
           );
           return forecasts;
         }
@@ -633,6 +708,7 @@ export = function (app: SignalKApp): SignalKPlugin {
         'network.weatherflow.windCalculations.state',
       stationLatitude: options.stationLatitude || 0,
       stationLongitude: options.stationLongitude || 0,
+      setCurrentLocationAction: options.setCurrentLocationAction || { setCurrentLocation: false },
     };
 
     state.currentConfig = config;
@@ -655,6 +731,11 @@ export = function (app: SignalKApp): SignalKPlugin {
 
     // Start plugin services
     startPluginServices(config);
+
+    // Handle "Set Current Location" action
+    handleSetCurrentLocationAction(config).catch(err => {
+      app.error(`Error handling set current location action: ${err}`);
+    });
 
     // Register as Weather API provider
     try {
@@ -909,6 +990,12 @@ export = function (app: SignalKApp): SignalKPlugin {
         break;
       case 'evt_strike':
         processLightningEvent(data as LightningEventData, config);
+        break;
+      case 'hub_status':
+        processHubStatus(data as HubStatusData, config);
+        break;
+      case 'device_status':
+        processDeviceStatus(data as DeviceStatusData, config);
         break;
       default:
         app.debug('Unknown WeatherFlow message type: ' + data.type);
@@ -1166,13 +1253,40 @@ export = function (app: SignalKApp): SignalKPlugin {
     data: any
   ): WeatherData {
     const baseWeatherData: WeatherData = {
-      date: data.utcDate || new Date().toISOString(),
+      date: data.utcDate || new Date(data.time ? data.time * 1000 : Date.now()).toISOString(),
       type: 'observation',
-      description: `WeatherFlow ${observationType} observation`,
+      description: data.conditions || `WeatherFlow ${observationType} observation`,
     };
 
-    // Convert Tempest observation data
-    if (observationType === 'tempest') {
+    // Prioritize currentConditions (REST API) data - much richer than UDP
+    if (observationType === 'currentConditions') {
+      baseWeatherData.outside = {
+        temperature: data.air_temperature + 273.15, // Convert °C to K
+        pressure: data.sea_level_pressure ? data.sea_level_pressure * 100 : data.station_pressure * 100, // Convert MB to Pa
+        relativeHumidity: data.relative_humidity / 100, // Convert % to ratio 0-1
+        feelsLikeTemperature: data.feels_like + 273.15, // Convert °C to K
+        dewPointTemperature: data.dew_point + 273.15, // Convert °C to K
+        uvIndex: data.uv,
+        precipitationVolume: 0, // Current conditions doesn't have accumulation
+        pressureTendency: mapPressureTendency(data.pressure_trend),
+        // Extended WeatherFlow fields
+        solarRadiation: data.solar_radiation, // W/m²
+        airDensity: data.air_density, // kg/m³
+        wetBulbTemperature: data.wet_bulb_temperature ? data.wet_bulb_temperature + 273.15 : undefined, // Convert °C to K
+        wetBulbGlobeTemperature: data.wet_bulb_globe_temperature ? data.wet_bulb_globe_temperature + 273.15 : undefined, // Convert °C to K
+        deltaT: data.delta_t, // °C (fire weather index)
+      };
+
+      baseWeatherData.wind = {
+        speedTrue: data.wind_avg, // Already in m/s
+        directionTrue: (data.wind_direction * Math.PI) / 180, // Convert degrees to radians
+        gust: data.wind_gust, // Already in m/s
+        averageSpeed: data.wind_avg, // Already in m/s
+        directionCardinal: data.wind_direction_cardinal, // E, W, NE, etc.
+      };
+    }
+    // Convert Tempest observation data (UDP fallback)
+    else if (observationType === 'tempest') {
       baseWeatherData.outside = {
         temperature: data.airTemperature, // Already in Kelvin
         pressure: data.stationPressure, // Already in Pascal
@@ -1180,12 +1294,16 @@ export = function (app: SignalKApp): SignalKPlugin {
         uvIndex: data.uvIndex,
         precipitationVolume: data.rainAccumulated, // Already in meters
         precipitationType: mapPrecipitationType(data.precipitationType),
+        // Extended WeatherFlow fields from UDP
+        solarRadiation: data.solarRadiation, // W/m²
+        illuminance: data.illuminance, // lux
       };
 
       baseWeatherData.wind = {
         speedTrue: data.windAvg, // Already in m/s
         directionTrue: data.windDirection, // Already in radians
         gust: data.windGust, // Already in m/s
+        averageSpeed: data.windAvg, // Already in m/s
       };
     }
 
@@ -1307,6 +1425,20 @@ export = function (app: SignalKApp): SignalKPlugin {
         return 'mixed/ice';
       default:
         return 'not available';
+    }
+  }
+
+  // Map pressure trend string to SignalK format
+  function mapPressureTendency(pressureTrend: string): TendencyKind {
+    switch (pressureTrend) {
+      case 'falling':
+        return 'decreasing';
+      case 'rising':
+        return 'increasing';
+      case 'steady':
+        return 'steady';
+      default:
+        return 'steady';
     }
   }
 
@@ -1567,6 +1699,124 @@ export = function (app: SignalKApp): SignalKPlugin {
     });
   }
 
+  // Process hub status messages
+  function processHubStatus(data: HubStatusData, config: PluginConfig): void {
+    if (!data.serial_number || !data.timestamp) return;
+
+    const hubStatusData: ProcessedHubStatusData = {
+      timeEpoch: data.timestamp,
+      serialNumber: data.serial_number,
+      firmwareRevision: data.firmware_revision,
+      uptime: data.uptime,
+      rssi: data.rssi,
+      resetFlags: data.reset_flags,
+      sequence: data.seq,
+      radioStats: {
+        version: data.radio_stats[0] || 0,
+        rebootCount: data.radio_stats[1] || 0,
+        busErrorCount: data.radio_stats[2] || 0,
+        radioStatus: data.radio_stats[3] || 0,
+        networkId: data.radio_stats[4] || 0,
+      },
+      utcDate: new Date(data.timestamp * 1000).toISOString(),
+    };
+
+    // Send complete hub status as a single object
+    const timestamp = hubStatusData.utcDate;
+    const source = getVesselBasedSource(config.vesselName, 'udp');
+    const path = `network.weatherflow.hubstatus.${config.stationId}`;
+
+    // Create complete hub status object (excluding utcDate and timeEpoch)
+    const hubStatusObject = {
+      serialNumber: hubStatusData.serialNumber,
+      firmwareRevision: hubStatusData.firmwareRevision,
+      uptime: hubStatusData.uptime,
+      rssi: hubStatusData.rssi,
+      resetFlags: hubStatusData.resetFlags,
+      sequence: hubStatusData.sequence,
+      radioStats: hubStatusData.radioStats,
+    };
+
+    // Send as single SignalK delta
+    const delta: SignalKDelta = {
+      context: 'vessels.self',
+      updates: [
+        {
+          $source: source,
+          timestamp,
+          values: [
+            {
+              path,
+              value: hubStatusObject,
+            },
+          ],
+        },
+      ],
+    };
+
+    app.handleMessage('signalk-weatherflow', delta);
+
+    app.debug(`Hub status processed for station ${config.stationId}: uptime=${hubStatusData.uptime}s, rssi=${hubStatusData.rssi}dBm`);
+  }
+
+  // Process device status messages
+  function processDeviceStatus(data: DeviceStatusData, config: PluginConfig): void {
+    if (!data.serial_number || !data.timestamp) return;
+
+    const deviceStatusData: ProcessedDeviceStatusData = {
+      timeEpoch: data.timestamp,
+      serialNumber: data.serial_number,
+      hubSerialNumber: data.hub_sn,
+      uptime: data.uptime,
+      voltage: data.voltage,
+      firmwareRevision: data.firmware_revision,
+      rssi: data.rssi,
+      hubRssi: data.hub_rssi,
+      sensorStatus: data.sensor_status,
+      debugEnabled: data.debug === 1,
+      utcDate: new Date(data.timestamp * 1000).toISOString(),
+    };
+
+    // Send complete device status as a single object
+    const timestamp = deviceStatusData.utcDate;
+    const source = getVesselBasedSource(config.vesselName, 'udp');
+    const path = `network.weatherflow.devicestatus.${data.serial_number}`;
+
+    // Create complete device status object (excluding utcDate and timeEpoch)
+    const deviceStatusObject = {
+      serialNumber: deviceStatusData.serialNumber,
+      hubSerialNumber: deviceStatusData.hubSerialNumber,
+      uptime: deviceStatusData.uptime,
+      voltage: deviceStatusData.voltage,
+      firmwareRevision: deviceStatusData.firmwareRevision,
+      rssi: deviceStatusData.rssi,
+      hubRssi: deviceStatusData.hubRssi,
+      sensorStatus: deviceStatusData.sensorStatus,
+      debugEnabled: deviceStatusData.debugEnabled,
+    };
+
+    // Send as single SignalK delta
+    const delta: SignalKDelta = {
+      context: 'vessels.self',
+      updates: [
+        {
+          $source: source,
+          timestamp,
+          values: [
+            {
+              path,
+              value: deviceStatusObject,
+            },
+          ],
+        },
+      ],
+    };
+
+    app.handleMessage('signalk-weatherflow', delta);
+
+    app.debug(`Device status processed for ${data.serial_number}: uptime=${deviceStatusData.uptime}s, voltage=${deviceStatusData.voltage}V, rssi=${deviceStatusData.rssi}dBm`);
+  }
+
   // Process forecast data
   function processForecastData(data: ForecastData, vesselName?: string): void {
     // Cache forecast data for Weather API
@@ -1578,6 +1828,9 @@ export = function (app: SignalKApp): SignalKPlugin {
     }
     // Process current conditions
     if (data.current_conditions) {
+      // Cache current conditions for Weather API (richer data than UDP)
+      cacheObservationData('currentConditions', data.current_conditions);
+
       const delta = createSignalKDelta(
         'environment.outside.tempest.observations',
         data.current_conditions,

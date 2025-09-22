@@ -55,6 +55,9 @@ export interface PluginConfig {
   windCalculationsControlPath: string;
   stationLatitude?: number;
   stationLongitude?: number;
+  setCurrentLocationAction?: {
+    setCurrentLocation?: boolean;
+  };
 }
 
 // PUT handler type
@@ -143,6 +146,34 @@ export interface LightningEventData {
   source: string;
 }
 
+export interface HubStatusData {
+  type: 'hub_status';
+  serial_number: string;
+  firmware_revision: string;
+  uptime: number;
+  rssi: number;
+  timestamp: number;
+  reset_flags: string;
+  seq: number;
+  fs: number[];
+  radio_stats: number[];
+  mqtt_stats: number[];
+}
+
+export interface DeviceStatusData {
+  type: 'device_status';
+  serial_number: string;
+  hub_sn: string;
+  timestamp: number;
+  uptime: number;
+  voltage: number;
+  firmware_revision: number;
+  rssi: number;
+  hub_rssi: number;
+  sensor_status: number;
+  debug: number;
+}
+
 // Processed observation data
 export interface ProcessedWindData {
   timeEpoch: number;
@@ -198,6 +229,38 @@ export interface ProcessedLightningData {
   timeEpoch: number;
   lightningStrikeAvgDistance: number;
   energy: number;
+  utcDate: string;
+}
+
+export interface ProcessedHubStatusData {
+  timeEpoch: number;
+  serialNumber: string;
+  firmwareRevision: string;
+  uptime: number; // seconds
+  rssi: number; // dBm
+  resetFlags: string;
+  sequence: number;
+  radioStats: {
+    version: number;
+    rebootCount: number;
+    busErrorCount: number;
+    radioStatus: number;
+    networkId: number;
+  };
+  utcDate: string;
+}
+
+export interface ProcessedDeviceStatusData {
+  timeEpoch: number;
+  serialNumber: string;
+  hubSerialNumber: string;
+  uptime: number; // seconds
+  voltage: number; // volts
+  firmwareRevision: number;
+  rssi: number; // dBm - device signal strength
+  hubRssi: number; // dBm - hub signal strength
+  sensorStatus: number; // bit flags for sensor health
+  debugEnabled: boolean;
   utcDate: string;
 }
 
@@ -427,6 +490,13 @@ export interface WeatherData {
     pressureTendency?: TendencyKind;
     relativeHumidity?: number;
     precipitationType?: PrecipitationKind;
+    // Extended WeatherFlow-specific fields
+    solarRadiation?: number;
+    illuminance?: number;
+    airDensity?: number;
+    wetBulbTemperature?: number;
+    wetBulbGlobeTemperature?: number;
+    deltaT?: number;
   };
   water?: {
     temperature?: number;
@@ -447,6 +517,10 @@ export interface WeatherData {
     directionTrue?: number;
     gust?: number;
     gustDirection?: number;
+    averageSpeed?: number;
+    gustDirectionTrue?: number;
+    // Extended WeatherFlow fields
+    directionCardinal?: string;
   };
   sun?: {
     sunrise?: string;
