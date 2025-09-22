@@ -490,6 +490,7 @@ export interface WeatherData {
     pressureTendency?: TendencyKind;
     relativeHumidity?: number;
     precipitationType?: PrecipitationKind;
+    precipitationProbability?: number;
     // Extended WeatherFlow-specific fields
     solarRadiation?: number;
     illuminance?: number;

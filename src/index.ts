@@ -1315,12 +1315,12 @@ export = function (app: SignalKApp): SignalKPlugin {
       };
     }
 
-    // Convert air station data
-    if (observationType === 'air') {
+    // Convert air station data (UDP)
+    else if (observationType === 'air') {
       baseWeatherData.outside = {
-        temperature: data.airTemperature, // Already in Kelvin
-        pressure: data.stationPressure, // Already in Pascal
-        relativeHumidity: data.relativeHumidity, // Already as ratio 0-1
+        temperature: data.airTemperature, // Already in Kelvin from UDP processing
+        pressure: data.stationPressure, // Already in Pascal from UDP processing
+        relativeHumidity: data.relativeHumidity, // Already as ratio 0-1 from UDP processing
       };
     }
 
@@ -1355,8 +1355,15 @@ export = function (app: SignalKApp): SignalKPlugin {
           : undefined, // Convert mm to m
         pressure: forecast.sea_level_pressure
           ? forecast.sea_level_pressure * 100
-          : undefined, // Convert MB to Pa
+          : forecast.station_pressure
+          ? forecast.station_pressure * 100
+          : undefined, // Prefer sea level, fallback to station pressure (MB to Pa)
         uvIndex: forecast.uv,
+        // Extended WeatherFlow forecast fields
+        wetBulbTemperature: calculateWetBulbTemperature(forecast.air_temperature, forecast.relative_humidity),
+        precipitationProbability: forecast.precip_probability
+          ? forecast.precip_probability / 100
+          : undefined, // Convert % to ratio 0-1
       };
 
       baseWeatherData.wind = {
@@ -1365,6 +1372,7 @@ export = function (app: SignalKApp): SignalKPlugin {
           ? forecast.wind_direction * (Math.PI / 180)
           : undefined, // Convert deg to rad
         gust: forecast.wind_gust,
+        averageSpeed: forecast.wind_avg, // Same as speedTrue for consistency
       };
     } else if (type === 'daily') {
       // Daily forecast
@@ -1376,6 +1384,9 @@ export = function (app: SignalKApp): SignalKPlugin {
           ? forecast.air_temp_low + 273.15
           : undefined,
         precipitationType: mapPrecipitationType(forecast.precip_type),
+        precipitationProbability: forecast.precip_probability
+          ? forecast.precip_probability / 100
+          : undefined, // Convert % to ratio 0-1
       };
 
       baseWeatherData.wind = {
@@ -1383,6 +1394,7 @@ export = function (app: SignalKApp): SignalKPlugin {
         directionTrue: forecast.wind_direction
           ? forecast.wind_direction * (Math.PI / 180)
           : undefined,
+        averageSpeed: forecast.wind_avg, // Same as speedTrue for consistency
       };
 
       if (forecast.sunrise_iso && forecast.sunset_iso) {
@@ -1442,6 +1454,21 @@ export = function (app: SignalKApp): SignalKPlugin {
     }
   }
 
+  // Calculate wet bulb temperature from air temperature and relative humidity
+  function calculateWetBulbTemperature(tempC: number, relativeHumidity: number): number | undefined {
+    if (tempC == null || relativeHumidity == null) return undefined;
+
+    // Simple approximation of wet bulb temperature (Stull formula)
+    // More accurate calculation would require iterative approach
+    const rh = relativeHumidity / 100; // Convert % to ratio if needed
+    const tw = tempC * Math.atan(0.151977 * Math.sqrt(rh + 8.313659)) +
+               Math.atan(tempC + rh) -
+               Math.atan(rh - 1.676331) +
+               0.00391838 * Math.pow(rh, 1.5) * Math.atan(0.023101 * rh) - 4.686035;
+
+    return tw + 273.15; // Convert to Kelvin
+  }
+
   // Get station location from vessel's current position or fallback to configured coordinates
   function getStationLocation(): Position {
     // First try to get current vessel position
@@ -1493,8 +1520,12 @@ export = function (app: SignalKApp): SignalKPlugin {
       utcDate: new Date(timeEpoch * 1000).toISOString(),
     };
 
-    // Cache data for Weather API
-    cacheObservationData('rapidWind', windData);
+    // Cache data for Weather API (with unit conversions applied)
+    const weatherApiData = {
+      ...windData,
+      windDirection: (windDirection * Math.PI) / 180, // Convert degrees to radians
+    };
+    cacheObservationData('rapidWind', weatherApiData);
 
     // Send individual deltas for each wind observation
     const timestamp = windData.utcDate;
@@ -1575,8 +1606,20 @@ export = function (app: SignalKApp): SignalKPlugin {
       utcDate: new Date(obs[0] * 1000).toISOString(),
     };
 
-    // Cache data for Weather API
-    cacheObservationData('tempest', observationData);
+    // Cache data for Weather API (with unit conversions applied)
+    const weatherApiData = {
+      ...observationData,
+      windDirection: (obs[4] * Math.PI) / 180, // Convert degrees to radians
+      stationPressure: obs[6] * 100, // Convert mbar to Pa
+      airTemperature: obs[7] + 273.15, // Convert °C to K
+      relativeHumidity: obs[8] / 100, // Convert % to ratio 0-1
+      rainAccumulated: obs[12] / 1000, // Convert mm to m
+      lightningStrikeAvgDistance: obs[14] * 1000, // Convert km to m
+      localDailyRainAccumulation: obs[18] / 1000, // Convert mm to m
+      rainAccumulatedFinal: obs[19] / 1000, // Convert mm to m
+      localDailyRainAccumulationFinal: obs[20] / 1000, // Convert mm to m
+    };
+    cacheObservationData('tempest', weatherApiData);
 
     // Send individual deltas for each tempest observation
     const timestamp = observationData.utcDate;
@@ -1623,8 +1666,14 @@ export = function (app: SignalKApp): SignalKPlugin {
       utcDate: new Date(obs[0] * 1000).toISOString(),
     };
 
-    // Cache data for Weather API
-    cacheObservationData('air', observationData);
+    // Cache data for Weather API (with unit conversions applied)
+    const weatherApiData = {
+      ...observationData,
+      stationPressure: obs[1] * 100, // Convert mbar to Pa
+      airTemperature: obs[2] + 273.15, // Convert °C to K
+      relativeHumidity: obs[3] / 100, // Convert % to ratio 0-1
+    };
+    cacheObservationData('air', weatherApiData);
 
     // Send individual deltas for each air observation
     const timestamp = observationData.utcDate;
