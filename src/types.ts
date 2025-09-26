@@ -3,7 +3,10 @@ export interface SignalKApp {
   debug: (msg: string) => void;
   error: (msg: string) => void;
   handleMessage: (pluginId: string, delta: SignalKDelta) => void;
-  savePluginOptions: (options: any, callback: (err?: any) => void) => void;
+  savePluginOptions: (
+    options: Record<string, unknown>,
+    callback: (err?: unknown) => void
+  ) => void;
   setProviderStatus: (msg: string) => void;
   getDataDirPath: () => string;
   subscriptionmanager: {
@@ -20,7 +23,7 @@ export interface SignalKApp {
     handler: (
       context: string,
       path: string,
-      value: any,
+      value: unknown,
       callback?: (result: { state: string; statusCode?: number }) => void
     ) => { state: string; statusCode?: number },
     source?: string
@@ -32,8 +35,8 @@ export interface SignalKPlugin {
   id: string;
   name: string;
   description: string;
-  schema: any;
-  start: (options: Partial<PluginConfig>, restartPlugin?: () => void) => void;
+  schema: Record<string, unknown>;
+  start: (options: Partial<PluginConfig>) => void;
   stop: () => void;
   config?: PluginConfig;
 }
@@ -64,7 +67,7 @@ export interface PluginConfig {
 export type PutHandler = (
   context: string,
   path: string,
-  value: any,
+  value: unknown,
   callback?: (result: { state: string; statusCode?: number }) => void
 ) => { state: string; statusCode?: number };
 
@@ -269,8 +272,8 @@ export interface WebSocketMessage {
   type?: string;
   device_id?: number;
   id?: string;
-  summary?: any;
-  status?: any;
+  summary?: unknown;
+  status?: unknown;
   obs?: number[][];
   utcDate?: string;
 }
@@ -383,7 +386,7 @@ export interface DerivedWindValues {
 
 // Unit conversion result
 export interface ConvertedValue {
-  value: any;
+  value: unknown;
   units: string | null;
 }
 
@@ -406,7 +409,7 @@ export interface SignalKUpdate {
 
 export interface SignalKValue {
   path: string;
-  value: any;
+  value: unknown;
 }
 
 export interface SignalKMeta {
@@ -432,7 +435,7 @@ export interface SubscriptionItem {
 
 export interface SubscriptionValue {
   path: string;
-  value: any;
+  value: unknown;
   timestamp: string;
   $source?: string;
 }

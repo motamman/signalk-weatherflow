@@ -4,7 +4,6 @@ import {
   ApparentWindData,
   DerivedWindValues,
   SignalKDelta,
-  SubscriptionValue,
 } from './types';
 
 export class WindCalculations {
@@ -90,14 +89,9 @@ export class WindCalculations {
 
   // Calculate apparent wind values
   calculateApparentWind(windData: WindInput): ApparentWindData {
-    const windRelative = windData.windDirection;
-
     // Calculate apparent wind angles and directions
     const headingTrueDeg = this.radToDeg(this.headingTrue);
     const headingMagneticDeg = this.radToDeg(this.headingMagnetic);
-    const courseOverGroundMagneticDeg = this.courseOverGroundMagnetic
-      ? this.radToDeg(this.courseOverGroundMagnetic)
-      : headingMagneticDeg;
 
     // Wind angle - relative to bow
     const windAngleRelative = windData.windDirection;
@@ -126,12 +120,6 @@ export class WindCalculations {
   ): DerivedWindValues {
     const timestamp = new Date().toISOString();
     const source = this.getVesselBasedSource('derived');
-
-    // Determine which heading to use for calculations
-    let useDirection = this.headingMagnetic;
-    if (this.courseOverGroundMagnetic != null) {
-      useDirection = this.courseOverGroundMagnetic;
-    }
 
     const effectiveHeadingTrueRad = this.anchorSet
       ? this.anchorApparentBearing
