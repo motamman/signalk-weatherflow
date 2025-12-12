@@ -1343,16 +1343,16 @@ export = function (app: SignalKApp): SignalKPlugin {
     const baseWeatherData: WeatherData = {
       date: forecast.datetime || new Date(forecast.time * 1000).toISOString(),
       type: type,
-      description: `WeatherFlow ${type} forecast`,
+      description: forecast.conditions || `WeatherFlow ${type} forecast`,
     };
 
     if (type === 'point') {
-      // Hourly forecast
+      // Hourly forecast - use != null to handle 0°C correctly
       baseWeatherData.outside = {
-        temperature: forecast.air_temperature
+        temperature: forecast.air_temperature != null
           ? forecast.air_temperature + 273.15
           : undefined, // Convert °C to K
-        feelsLikeTemperature: forecast.feels_like
+        feelsLikeTemperature: forecast.feels_like != null
           ? forecast.feels_like + 273.15
           : undefined,
         relativeHumidity: forecast.relative_humidity
@@ -1903,12 +1903,41 @@ export = function (app: SignalKApp): SignalKPlugin {
       // Cache current conditions for Weather API (richer data than UDP)
       cacheObservationData('currentConditions', data.current_conditions);
 
-      const delta = createSignalKDelta(
-        'environment.outside.tempest.observations',
-        data.current_conditions,
-        getVesselBasedSource(vesselName, 'api')
-      );
-      app.handleMessage(plugin.id, delta);
+      // Convert current conditions to SignalK units
+      const source = getVesselBasedSource(vesselName, 'api');
+      Object.entries(data.current_conditions).forEach(([key, value]) => {
+        if (value !== undefined) {
+          let processedValue = value;
+          const camelKey = toCamelCase(key);
+
+          // Apply unit conversions
+          if (
+            key === 'air_temperature' ||
+            key === 'feels_like' ||
+            key === 'dew_point' ||
+            key === 'wet_bulb_temperature' ||
+            key === 'wet_bulb_globe_temperature'
+          ) {
+            processedValue = (value as number) + 273.15; // °C to K
+          } else if (
+            key === 'sea_level_pressure' ||
+            key === 'station_pressure'
+          ) {
+            processedValue = (value as number) * 100; // MB to Pa
+          } else if (key === 'wind_direction') {
+            processedValue = ((value as number) * Math.PI) / 180; // degrees to radians
+          } else if (key === 'relative_humidity') {
+            processedValue = (value as number) / 100; // % to ratio
+          }
+
+          const delta = createSignalKDelta(
+            `environment.outside.tempest.observations.${camelKey}`,
+            processedValue,
+            source
+          );
+          app.handleMessage(plugin.id, delta);
+        }
+      });
     }
 
     // Process hourly forecast (first 72 hours)
@@ -1932,6 +1961,13 @@ export = function (app: SignalKApp): SignalKPlugin {
               processedValue = (value as number) * 100; // MB to Pa
             } else if (key === 'wind_direction') {
               processedValue = ((value as number) * Math.PI) / 180; // degrees to radians
+            } else if (
+              key === 'relative_humidity' ||
+              key === 'precip_probability'
+            ) {
+              processedValue = (value as number) / 100; // % to ratio
+            } else if (key === 'precip') {
+              processedValue = (value as number) / 1000; // mm to m
             }
 
             // Add datetime field for time
@@ -1974,6 +2010,18 @@ export = function (app: SignalKApp): SignalKPlugin {
             // Apply unit conversions
             if (key === 'air_temp_high' || key === 'air_temp_low') {
               processedValue = (value as number) + 273.15; // °C to K
+            } else if (
+              key === 'sea_level_pressure' ||
+              key === 'station_pressure'
+            ) {
+              processedValue = (value as number) * 100; // MB to Pa
+            } else if (key === 'wind_direction') {
+              processedValue = ((value as number) * Math.PI) / 180; // degrees to radians
+            } else if (
+              key === 'relative_humidity' ||
+              key === 'precip_probability'
+            ) {
+              processedValue = (value as number) / 100; // % to ratio
             }
 
             // Add ISO datetime fields

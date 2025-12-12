@@ -138,7 +138,8 @@ The WeatherFlow Weather API provider includes advanced meteorological data beyon
 
 **Multiple Provider Support**:
 - Use `?provider=signalk-weatherflow` to explicitly request WeatherFlow data
-- Compatible with other weather providers (e.g., signalk-meteo for model-based forecasts)
+- To list all registered weather providers: `GET /signalk/v2/api/weather/_providers`
+- Compatible with other weather providers (e.g., signalk-meteoblue for model-based forecasts)
 
 ## External Control (PUT Operations)
 
