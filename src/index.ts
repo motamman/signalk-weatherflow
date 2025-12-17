@@ -1349,12 +1349,14 @@ export = function (app: SignalKApp): SignalKPlugin {
     if (type === 'point') {
       // Hourly forecast - use != null to handle 0°C correctly
       baseWeatherData.outside = {
-        temperature: forecast.air_temperature != null
-          ? forecast.air_temperature + 273.15
-          : undefined, // Convert °C to K
-        feelsLikeTemperature: forecast.feels_like != null
-          ? forecast.feels_like + 273.15
-          : undefined,
+        temperature:
+          forecast.air_temperature != null
+            ? forecast.air_temperature + 273.15
+            : undefined, // Convert °C to K
+        feelsLikeTemperature:
+          forecast.feels_like != null
+            ? forecast.feels_like + 273.15
+            : undefined,
         relativeHumidity: forecast.relative_humidity
           ? forecast.relative_humidity / 100
           : undefined, // Convert % to ratio
