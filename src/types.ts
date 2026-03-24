@@ -204,10 +204,10 @@ export interface ProcessedTempestData {
   lightningStrikeCount: number;
   battery: number;
   reportInterval: number;
-  localDailyRainAccumulation: number;
-  rainAccumulatedFinal: number;
-  localDailyRainAccumulationFinal: number;
-  precipitationAnalysisType: number;
+  localDailyRainAccumulation?: number;
+  ncRainAccumulation?: number;
+  localDailyNcRainAccumulation?: number;
+  precipitationAnalysisType?: number;
   utcDate: string;
 }
 

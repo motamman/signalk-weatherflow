@@ -1037,17 +1037,54 @@ export = function (app: SignalKApp): SignalKPlugin {
 
     // Add units metadata if available
     if (converted.units) {
+      const metaValue: any = {
+        units: converted.units,
+      };
+
+      const category = getDisplayCategory(converted.units);
+      if (category) {
+        metaValue.displayUnits = { category };
+      }
+
       delta.updates[0].meta = [
         {
           path: path,
-          value: {
-            units: converted.units,
-          },
+          value: metaValue,
         },
       ];
     }
 
     app.handleMessage(plugin.id, delta);
+  }
+
+  // Map SI units to Signal K display categories
+  function getDisplayCategory(units: string): string | null {
+    switch (units) {
+      case 'K':
+        return 'temperature';
+      case 'Pa':
+        return 'pressure';
+      case 'rad':
+        return 'angle';
+      case 'm/s':
+        return 'speed';
+      case 'm':
+        return 'length';
+      case 'ratio':
+        return 'percent';
+      case 's':
+        return 'time';
+      case 'lux':
+        return 'illuminance';
+      case 'W/m2':
+        return 'irradiance';
+      case 'V':
+        return 'voltage';
+      case 'kg/m3':
+        return 'density';
+      default:
+        return null;
+    }
   }
 
   // Convert WeatherFlow values to SignalK standard units and get units metadata
@@ -1060,6 +1097,8 @@ export = function (app: SignalKApp): SignalKPlugin {
     switch (normalizedKey) {
       // Temperature conversions: °C to K
       case 'airTemperature':
+      case 'airTempHigh':
+      case 'airTempLow':
       case 'feelsLike':
       case 'heatIndex':
       case 'windChill':
@@ -1070,6 +1109,7 @@ export = function (app: SignalKApp): SignalKPlugin {
 
       // Pressure conversions: MB to Pa
       case 'stationPressure':
+      case 'seaLevelPressure':
       case 'pressure':
         return { value: value * 100, units: 'Pa' };
 
@@ -1088,16 +1128,18 @@ export = function (app: SignalKApp): SignalKPlugin {
 
       // Rain conversions: mm to m
       case 'rainAccumulated':
-      case 'rainAccumulatedFinal':
+      case 'ncRainAccumulation':
       case 'localDailyRainAccumulation':
-      case 'localDailyRainAccumulationFinal':
+      case 'localDailyNcRainAccumulation':
       case 'precipTotal1h':
       case 'precipAccumLocalYesterday':
       case 'precipAccumLocalYesterdayFinal':
+      case 'precip':
         return { value: value / 1000, units: 'm' };
 
       // Relative humidity: % to ratio (0-1)
       case 'relativeHumidity':
+      case 'precipProbability':
         return { value: value / 100, units: 'ratio' };
 
       // Wind speeds (already in m/s)
@@ -1135,10 +1177,19 @@ export = function (app: SignalKApp): SignalKPlugin {
       case 'deltaT':
         return { value: value, units: 'K' };
 
+      // Time values (epoch seconds)
+      case 'time':
+      case 'dayStartLocal':
+      case 'sunrise':
+      case 'sunset':
+        return { value: value, units: 's' };
+
       // Counts and indices (dimensionless)
       case 'uvIndex':
+      case 'uv':
       case 'precipitationType':
       case 'precipType':
+      case 'precipIcon':
       case 'lightningStrikeCount':
       case 'strikeCount1h':
       case 'strikeCount3h':
@@ -1151,12 +1202,19 @@ export = function (app: SignalKApp): SignalKPlugin {
       case 'statusCode':
       case 'statusMessage':
       case 'id':
+      case 'localHour':
+      case 'localDay':
+      case 'dayNum':
+      case 'monthNum':
         return { value: value, units: null };
 
       // String values (no units)
       case 'serialNumber':
       case 'hubSn':
       case 'pressureTrend':
+      case 'conditions':
+      case 'icon':
+      case 'windDirectionCardinal':
         return { value: value, units: null };
 
       default:
@@ -1207,8 +1265,8 @@ export = function (app: SignalKApp): SignalKPlugin {
         battery: obsArray[16],
         reportInterval: obsArray[17], // Will be converted to sec by convertToSignalKUnits
         localDailyRainAccumulation: obsArray[18], // Will be converted to m by convertToSignalKUnits
-        rainAccumulatedFinal: obsArray[19], // Will be converted to m by convertToSignalKUnits
-        localDailyRainAccumulationFinal: obsArray[20], // Will be converted to m by convertToSignalKUnits
+        ncRainAccumulation: obsArray[19], // Will be converted to m by convertToSignalKUnits
+        localDailyNcRainAccumulation: obsArray[20], // Will be converted to m by convertToSignalKUnits
         precipitationAnalysisType: obsArray[21],
       };
 
@@ -1222,7 +1280,7 @@ export = function (app: SignalKApp): SignalKPlugin {
 
     // Create individual deltas for each observation property
     Object.entries(data).forEach(([key, value]) => {
-      if (key === 'utcDate') return; // Skip timestamp, use it for deltas
+      if (key === 'utcDate' || value == null) return; // Skip timestamp and missing values
       sendSignalKDelta(
         'environment.outside.tempest.observations',
         key,
@@ -1617,10 +1675,6 @@ export = function (app: SignalKApp): SignalKPlugin {
       lightningStrikeCount: obs[15],
       battery: obs[16],
       reportInterval: obs[17], // Will be converted to sec by convertToSignalKUnits
-      localDailyRainAccumulation: obs[18], // Will be converted to m by convertToSignalKUnits
-      rainAccumulatedFinal: obs[19], // Will be converted to m by convertToSignalKUnits
-      localDailyRainAccumulationFinal: obs[20], // Will be converted to m by convertToSignalKUnits
-      precipitationAnalysisType: obs[21],
       utcDate: new Date(obs[0] * 1000).toISOString(),
     };
 
@@ -1633,9 +1687,6 @@ export = function (app: SignalKApp): SignalKPlugin {
       relativeHumidity: obs[8] / 100, // Convert % to ratio 0-1
       rainAccumulated: obs[12] / 1000, // Convert mm to m
       lightningStrikeAvgDistance: obs[14] * 1000, // Convert km to m
-      localDailyRainAccumulation: obs[18] / 1000, // Convert mm to m
-      rainAccumulatedFinal: obs[19] / 1000, // Convert mm to m
-      localDailyRainAccumulationFinal: obs[20] / 1000, // Convert mm to m
     };
     cacheObservationData('tempest', weatherApiData);
 
@@ -1644,7 +1695,7 @@ export = function (app: SignalKApp): SignalKPlugin {
     const source = getVesselBasedSource(config.vesselName, 'udp');
 
     Object.entries(observationData).forEach(([key, value]) => {
-      if (key === 'utcDate') return; // Skip timestamp
+      if (key === 'utcDate' || value == null) return; // Skip timestamp and missing values
       sendSignalKDelta(
         'environment.outside.tempest.observations',
         key,
@@ -1905,94 +1956,51 @@ export = function (app: SignalKApp): SignalKPlugin {
       // Cache current conditions for Weather API (richer data than UDP)
       cacheObservationData('currentConditions', data.current_conditions);
 
-      // Convert current conditions to SignalK units
+      // Convert current conditions to SignalK units with metadata
       const source = getVesselBasedSource(vesselName, 'api');
+      const timestamp = new Date().toISOString();
       Object.entries(data.current_conditions).forEach(([key, value]) => {
-        if (value !== undefined) {
-          let processedValue = value;
-          const camelKey = toCamelCase(key);
-
-          // Apply unit conversions
-          if (
-            key === 'air_temperature' ||
-            key === 'feels_like' ||
-            key === 'dew_point' ||
-            key === 'wet_bulb_temperature' ||
-            key === 'wet_bulb_globe_temperature'
-          ) {
-            processedValue = (value as number) + 273.15; // °C to K
-          } else if (
-            key === 'sea_level_pressure' ||
-            key === 'station_pressure'
-          ) {
-            processedValue = (value as number) * 100; // MB to Pa
-          } else if (key === 'wind_direction') {
-            processedValue = ((value as number) * Math.PI) / 180; // degrees to radians
-          } else if (key === 'relative_humidity') {
-            processedValue = (value as number) / 100; // % to ratio
-          }
-
-          const delta = createSignalKDelta(
-            `environment.outside.tempest.observations.${camelKey}`,
-            processedValue,
-            source
-          );
-          app.handleMessage(plugin.id, delta);
-        }
+        if (value == null) return;
+        sendSignalKDelta(
+          'environment.outside.tempest.observations',
+          key,
+          value,
+          source,
+          timestamp
+        );
       });
     }
 
     // Process hourly forecast (first 72 hours)
     if (data.forecast && data.forecast.hourly) {
+      const timestamp = new Date().toISOString();
       data.forecast.hourly.slice(0, 72).forEach((forecast, index) => {
         const source = getVesselBasedSource(vesselName, 'api');
 
-        // Create individual deltas for each data point
         Object.entries(forecast).forEach(([key, value]) => {
-          if (value !== undefined) {
-            let processedValue = value;
-            const camelKey = toCamelCase(key);
+          if (value == null) return;
 
-            // Apply unit conversions
-            if (key === 'air_temperature' || key === 'feels_like') {
-              processedValue = (value as number) + 273.15; // °C to K
-            } else if (
-              key === 'sea_level_pressure' ||
-              key === 'station_pressure'
-            ) {
-              processedValue = (value as number) * 100; // MB to Pa
-            } else if (key === 'wind_direction') {
-              processedValue = ((value as number) * Math.PI) / 180; // degrees to radians
-            } else if (
-              key === 'relative_humidity' ||
-              key === 'precip_probability'
-            ) {
-              processedValue = (value as number) / 100; // % to ratio
-            } else if (key === 'precip') {
-              processedValue = (value as number) / 1000; // mm to m
-            }
+          // Send the value with units and meta via sendSignalKDelta
+          sendSignalKDelta(
+            `environment.outside.tempest.forecast.hourly.${index}`,
+            key,
+            value,
+            source,
+            timestamp
+          );
 
-            // Add datetime field for time
-            if (key === 'time') {
-              processedValue = value;
-              // Also create datetime version
-              const datetimeValue = new Date(
-                (value as number) * 1000
-              ).toISOString();
-              const datetimeDelta = createSignalKDelta(
-                `environment.outside.tempest.forecast.hourly.datetime.${index}`,
-                datetimeValue,
-                source
-              );
-              app.handleMessage(plugin.id, datetimeDelta);
-            }
-
-            const delta = createSignalKDelta(
-              `environment.outside.tempest.forecast.hourly.${camelKey}.${index}`,
-              processedValue,
-              source
+          // Also create ISO datetime version for time fields
+          if (key === 'time') {
+            const datetimeValue = new Date(
+              (value as number) * 1000
+            ).toISOString();
+            sendSignalKDelta(
+              `environment.outside.tempest.forecast.hourly.${index}`,
+              'datetime',
+              datetimeValue,
+              source,
+              timestamp
             );
-            app.handleMessage(plugin.id, delta);
           }
         });
       });
@@ -2000,56 +2008,37 @@ export = function (app: SignalKApp): SignalKPlugin {
 
     // Process daily forecast (first 10 days)
     if (data.forecast && data.forecast.daily) {
+      const timestamp = new Date().toISOString();
       data.forecast.daily.slice(0, 10).forEach((forecast, index) => {
         const source = getVesselBasedSource(vesselName, 'api');
 
-        // Create individual deltas for each data point
         Object.entries(forecast).forEach(([key, value]) => {
-          if (value !== undefined) {
-            let processedValue = value;
-            const camelKey = toCamelCase(key);
+          if (value == null) return;
 
-            // Apply unit conversions
-            if (key === 'air_temp_high' || key === 'air_temp_low') {
-              processedValue = (value as number) + 273.15; // °C to K
-            } else if (
-              key === 'sea_level_pressure' ||
-              key === 'station_pressure'
-            ) {
-              processedValue = (value as number) * 100; // MB to Pa
-            } else if (key === 'wind_direction') {
-              processedValue = ((value as number) * Math.PI) / 180; // degrees to radians
-            } else if (
-              key === 'relative_humidity' ||
-              key === 'precip_probability'
-            ) {
-              processedValue = (value as number) / 100; // % to ratio
-            }
+          // Send the value with units and meta via sendSignalKDelta
+          sendSignalKDelta(
+            `environment.outside.tempest.forecast.daily.${index}`,
+            key,
+            value,
+            source,
+            timestamp
+          );
 
-            // Add ISO datetime fields
-            if (
-              key === 'day_start_local' ||
-              key === 'sunrise' ||
-              key === 'sunset'
-            ) {
-              processedValue = value;
-              // Also create ISO version
-              const isoKey = `${toCamelCase(key)}Iso`;
-              const isoValue = new Date((value as number) * 1000).toISOString();
-              const isoDelta = createSignalKDelta(
-                `environment.outside.tempest.forecast.daily.${isoKey}.${index}`,
-                isoValue,
-                source
-              );
-              app.handleMessage(plugin.id, isoDelta);
-            }
-
-            const delta = createSignalKDelta(
-              `environment.outside.tempest.forecast.daily.${camelKey}.${index}`,
-              processedValue,
-              source
+          // Also create ISO datetime versions for epoch fields
+          if (
+            key === 'day_start_local' ||
+            key === 'sunrise' ||
+            key === 'sunset'
+          ) {
+            const isoKey = `${toCamelCase(key)}Iso`;
+            const isoValue = new Date((value as number) * 1000).toISOString();
+            sendSignalKDelta(
+              `environment.outside.tempest.forecast.daily.${index}`,
+              isoKey,
+              isoValue,
+              source,
+              timestamp
             );
-            app.handleMessage(plugin.id, delta);
           }
         });
       });
