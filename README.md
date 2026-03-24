@@ -13,7 +13,7 @@ Weatherflow forecast data is specific to the weather station registered location
 - **API Integration**: Fetches forecast data and current conditions from WeatherFlow REST API (internet connection required)
 - **Weather API Provider**: Provides comprehensive SignalK Weather API access with enhanced WeatherFlow data
 - **Wind Calculations**: Calculates true wind, apparent wind, wind chill, heat index, and feels-like temperature
-- **Unit Conversions**: Automatically converts units to SignalK standards (Kelvin, Pascals, radians, etc.)
+- **Unit Conversions**: Automatically converts units to SignalK standards (Kelvin, Pascals, radians, etc.) with full metadata including `displayUnits` categories
 - **Multiple Data Sources**: Supports Tempest, Air, and legacy WeatherFlow devices
 - **Automatic Position Detection**: Uses vessel position for Weather API location matching
 - **Lightning Warnings**: Provides weather warnings for lightning activity
@@ -207,8 +207,10 @@ The plugin publishes data to the following SignalK paths:
 - `environment.wind.directionMagnetic` - Magnetic wind direction
 
 ### Forecast Data
-- `environment.outside.tempest.forecast.hourly.*` - Hourly forecast (72 hours)
-- `environment.outside.tempest.forecast.daily.*` - Daily forecast (10 days)
+- `environment.outside.tempest.forecast.hourly.{index}.*` - Hourly forecast (72 hours)
+- `environment.outside.tempest.forecast.daily.{index}.*` - Daily forecast (10 days)
+
+Forecast paths are grouped by index (e.g., `forecast.hourly.0.airTemperature`, `forecast.hourly.0.windAvg`), making it easy to retrieve all fields for a single forecast period.
 
 **Note**: Forecast data is based on the WeatherFlow station's registered location, not the vessel's current position. For mobile applications, use the Weather API endpoints which can provide location-specific forecasts.
 
@@ -219,19 +221,22 @@ The plugin publishes data to the following SignalK paths:
 
 ## Data Types and Units
 
-All data is automatically converted to SignalK standard units:
+All data is automatically converted to SignalK standard units. Each delta includes `meta` with `units` and `displayUnits.category` for proper rendering:
 
-- **Temperature**: Celsius → Kelvin (K)
-- **Pressure**: Millibars → Pascals (Pa)
-- **Wind Direction**: Degrees → Radians (rad)
-- **Wind Speed**: Meters per second (m/s) - no conversion needed
-- **Distance**: Kilometers → Meters (m)
-- **Time**: Minutes → Seconds (s)
-- **Rainfall**: Millimeters → Meters (m)
-- **Relative Humidity**: Percentage → Ratio (0-1)
-- **Battery**: Volts (V) - no conversion needed
-- **Illuminance**: Lux - no conversion needed
-- **Solar Radiation**: W/m² - no conversion needed
+| Measurement | Conversion | Units | Display Category |
+|---|---|---|---|
+| Temperature | Celsius → Kelvin | K | temperature |
+| Pressure | Millibars → Pascals | Pa | pressure |
+| Wind Direction | Degrees → Radians | rad | angle |
+| Wind Speed | (no conversion) | m/s | speed |
+| Distance | Kilometers → Meters | m | length |
+| Rainfall | Millimeters → Meters | m | length |
+| Time | Minutes → Seconds | s | time |
+| Relative Humidity | Percentage → Ratio | ratio | percent |
+| Battery | (no conversion) | V | voltage |
+| Illuminance | (no conversion) | lux | illuminance |
+| Solar Radiation | (no conversion) | W/m2 | irradiance |
+| Air Density | (no conversion) | kg/m3 | density |
 
 ## Wind Calculations
 
