@@ -1,6 +1,6 @@
 {
   "name": "signalk-weatherflow",
-  "version": "0.6.1-beta.2",
+  "version": "0.7.0",
   "description": "SignalK plugin for WeatherFlow (Tempest) weather station data ingestion",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
